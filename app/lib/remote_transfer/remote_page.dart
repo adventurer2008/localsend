@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,7 @@ import 'package:localsend_app/remote_transfer/remote_runtime.dart';
 import 'package:localsend_app/remote_transfer/remote_settings.dart';
 import 'package:localsend_app/util/native/cross_file_converters.dart';
 import 'package:localsend_app/util/native/open_file.dart' as saved_file;
+import 'package:localsend_app/widget/device_drop_target.dart';
 import 'package:localsend_isolates/util/file_path_helper.dart';
 import 'package:localsend_isolates/util/file_size_helper.dart';
 import 'package:path/path.dart' as p;
@@ -98,7 +100,7 @@ class _RemotePageState extends State<RemotePage> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
   }
 
-  Future<void> _send(RemotePeer peer, {bool relayOnly = false}) async {
+  Future<void> _send(RemotePeer peer, {bool relayOnly = false, List<CrossFile>? droppedFiles}) async {
     if (_choosing || _client?.transfer != null) return;
     final ref = context.ref;
     final zh = Localizations.localeOf(context).languageCode == 'zh';
@@ -107,17 +109,18 @@ class _RemotePageState extends State<RemotePage> {
       _error = null;
     });
     try {
-      final file = widget.selectedFiles.isEmpty ? await openFile() : null;
-      if ((file == null && widget.selectedFiles.isEmpty) || !mounted) return;
+      final files = droppedFiles ?? widget.selectedFiles;
+      final file = files.isEmpty ? await openFile() : null;
+      if ((file == null && files.isEmpty) || !mounted) return;
       final local = relayOnly ? null : await reachableTrustedLan(ref, peer, discover: true);
       if (!mounted) return;
       if (_client?.transfer != null) throw StateError('Finish the current transfer first');
       if (local != null) {
-        final selected = file == null ? widget.selectedFiles : [await CrossFileConverters.convertXFile(file)];
+        final selected = file == null ? files : [await CrossFileConverters.convertXFile(file)];
         if (!mounted) return;
         await ref.notifier(sendProvider).startSession(target: local, files: selected, background: false);
       } else {
-        if (widget.selectedFiles.length > 1) {
+        if (files.length > 1) {
           throw StateError(zh ? '中继目前一次只能发一个文件，请选一个文件重试。' : 'The relay supports one file per transfer. Select a single file and retry.');
         }
         final client = await _runtime!.waitForPeer(peer.id);
@@ -126,7 +129,7 @@ class _RemotePageState extends State<RemotePage> {
         if (file != null) {
           await client.offer(peer, file);
         } else {
-          await _offerSelected(client, peer, widget.selectedFiles.single);
+          await _offerSelected(client, peer, files.single);
         }
       }
     } on StateError catch (error) {
@@ -181,7 +184,7 @@ class _RemotePageState extends State<RemotePage> {
     final nearby = context.watch(nearbyDevicesProvider).devices;
     final busy = _choosing || transfer != null;
 
-    return Scaffold(
+    final page = Scaffold(
       appBar: AppBar(title: Text(remoteTransferLabel(context))),
       body: SafeArea(
         child: Center(
@@ -247,19 +250,23 @@ class _RemotePageState extends State<RemotePage> {
                       subtitle: Text(saved),
                       onTap: () => saved_file.openFile(context, saved.guessFileType(), saved),
                     ),
+                  if (Platform.isWindows && _runtime!.peers.isNotEmpty) const DeviceDropHint(),
                   for (final peer in _runtime!.peers.values)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.devices),
-                      title: Text(peer.name),
-                      subtitle: Text(
-                        client?.online.containsKey(peer.id) == true
-                            ? 'Online via relay'
-                            : nearby[peer.lanFingerprint]?.https == true
-                            ? 'Discovered on local network'
-                            : 'Offline',
+                    DeviceDropTarget(
+                      onDrop: busy ? null : (files) => _send(peer, droppedFiles: files),
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.devices),
+                        title: Text(peer.name),
+                        subtitle: Text(
+                          client?.online.containsKey(peer.id) == true
+                              ? 'Online via relay'
+                              : nearby[peer.lanFingerprint]?.https == true
+                              ? 'Discovered on local network'
+                              : 'Offline',
+                        ),
+                        onTap: busy ? null : () => _send(peer),
                       ),
-                      onTap: busy ? null : () => _send(peer),
                     ),
                 ],
               ],
@@ -268,6 +275,7 @@ class _RemotePageState extends State<RemotePage> {
         ),
       ),
     );
+    return Platform.isWindows ? DropTarget(onDragDone: (event) async => DeviceDropTarget.sendDroppedFiles(context, event), child: page) : page;
   }
 }
 

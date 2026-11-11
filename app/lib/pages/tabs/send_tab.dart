@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:localsend_app/config/theme.dart';
@@ -20,6 +22,7 @@ import 'package:localsend_app/util/native/file_picker.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_app/widget/big_button.dart';
 import 'package:localsend_app/widget/custom_icon_button.dart';
+import 'package:localsend_app/widget/device_drop_target.dart';
 import 'package:localsend_app/widget/dialogs/add_file_dialog.dart';
 import 'package:localsend_app/widget/dialogs/send_mode_help_dialog.dart';
 import 'package:localsend_app/widget/file_thumbnail.dart';
@@ -223,25 +226,29 @@ class SendTab extends StatelessWidget {
               final favoriteEntry = vm.favoriteDevices.findDevice(device);
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10, left: _horizontalPadding, right: _horizontalPadding),
-                child: Hero(
-                  tag: 'device-${device.ip}',
-                  child: vm.sendMode == SendMode.multiple
-                      ? _MultiSendDeviceListTile(
-                          device: device,
-                          isFavorite: favoriteEntry != null,
-                          nameOverride: favoriteEntry?.alias,
-                          vm: vm,
-                        )
-                      : DeviceListTile(
-                          device: device,
-                          isFavorite: favoriteEntry != null,
-                          nameOverride: favoriteEntry?.alias,
-                          onDetailsTap: () async => await context.push(() => DeviceDetailsPage(device: device)),
-                          onTap: () async => await vm.onTapDevice(context, device),
-                        ),
+                child: DeviceDropTarget(
+                  onDrop: (files) => vm.onDropFiles(context, device, files),
+                  child: Hero(
+                    tag: 'device-${device.ip}',
+                    child: vm.sendMode == SendMode.multiple
+                        ? _MultiSendDeviceListTile(
+                            device: device,
+                            isFavorite: favoriteEntry != null,
+                            nameOverride: favoriteEntry?.alias,
+                            vm: vm,
+                          )
+                        : DeviceListTile(
+                            device: device,
+                            isFavorite: favoriteEntry != null,
+                            nameOverride: favoriteEntry?.alias,
+                            onDetailsTap: () async => await context.push(() => DeviceDetailsPage(device: device)),
+                            onTap: () async => await vm.onTapDevice(context, device),
+                          ),
+                  ),
                 ),
               );
             }),
+            if (Platform.isWindows && vm.nearbyDevices.isNotEmpty) const DeviceDropHint(),
             const SizedBox(height: 10),
             Center(
               child: TextButton(
