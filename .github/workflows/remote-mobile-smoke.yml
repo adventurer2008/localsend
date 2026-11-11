@@ -8,7 +8,7 @@ permissions:
 jobs:
   ios:
     if: "!contains(github.event.head_commit.message, '[android only]')"
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
@@ -19,6 +19,7 @@ jobs:
       - name: Build iOS simulator app
         working-directory: app
         run: |
+          xcodebuild -version
           rustup toolchain install --profile minimal
           rustup target add aarch64-apple-ios-sim
           flutter build ios --simulator --debug --no-codesign
