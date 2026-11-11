@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -135,8 +137,23 @@ class MainActivity : FlutterActivity() {
                     }
                 }
 
+                "hasLocalNetworkTransport" -> result.success(hasLocalNetworkTransport())
+
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    // The default network may be a VPN. Check for a connected Wi-Fi or Ethernet
+    // network underneath it rather than treating the tunnel address as a Wi-Fi IP.
+    @Suppress("DEPRECATION")
+    private fun hasLocalNetworkTransport(): Boolean {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return manager.allNetworks.any { network ->
+            val capabilities = manager.getNetworkCapabilities(network) ?: return@any false
+            val local = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+            local && manager.getLinkProperties(network)?.linkAddresses?.isNotEmpty() == true
         }
     }
 

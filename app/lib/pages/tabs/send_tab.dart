@@ -173,7 +173,7 @@ class SendTab extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsetsDirectional.only(start: _horizontalPadding),
                 child: TextButton.icon(
-                  onPressed: () => context.push(() => const RemotePage()),
+                  onPressed: () => context.push(() => RemotePage(selectedFiles: vm.selectedFiles)),
                   icon: const Icon(Icons.devices),
                   label: Text(remoteTransferLabel(context)),
                 ),

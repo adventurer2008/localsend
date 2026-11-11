@@ -186,6 +186,7 @@ StreamSubscription? _sharedMediaSubscription;
 /// Will be called when home page has been initialized
 Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
   await updateSystemOverlayStyle(context);
+  unawaited(ref.read(remoteRuntimeProvider).initialize());
 
   if (checkPlatform([TargetPlatform.android])) {
     try {
@@ -212,8 +213,6 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
       context.showSnackBar(e.toString());
     }
   }
-
-  unawaited(ref.read(remoteRuntimeProvider).initialize());
 
   try {
     ref.redux(nearbyDevicesProvider).dispatchAsync(StartDiscoveryListener()); // ignore: unawaited_futures

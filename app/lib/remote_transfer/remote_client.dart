@@ -130,21 +130,26 @@ class RemoteClient extends ChangeNotifier {
     await _socket?.close();
   }
 
-  Future<void> offer(RemotePeer peer, XFile file) => _queue(() async {
-    final peerEpoch = online[peer.id];
-    if (!connected || transfer != null || peerEpoch == null) throw StateError('Device is offline or busy');
-    final name = safeRemoteFileName(file.name);
-    final size = await file.length();
-    if (size < 0 || size > _maxFileSize) throw StateError('Unsupported file size');
-    final id = remoteRandomBytes(16).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
-    final key = await identity.transferKey(peer, identity.id, peer.id, id, peerEpoch);
-    final session = RemoteSession(id, identity.id, peer.id, key);
-    final offer = await session.seal('offer', utf8.encode(jsonEncode({'name': name, 'size': size})));
-    _write({...offer, 'to': peer.id, 'epoch': peerEpoch});
-    transfer = RemoteTransfer(session, peer, name, size, RemotePhase.waiting, source: file);
-    status = 'Waiting for ${peer.name} to accept';
-    _changed();
-  });
+  Future<void> offer(RemotePeer peer, XFile file, {String? fileName, Directory? staging}) async {
+    var started = false;
+    await _queue(() async {
+      final peerEpoch = online[peer.id];
+      if (!connected || transfer != null || peerEpoch == null) throw StateError('Device is offline or busy');
+      final name = safeRemoteFileName(fileName ?? file.name);
+      final size = await file.length();
+      if (size < 0 || size > _maxFileSize) throw StateError('Unsupported file size');
+      final id = remoteRandomBytes(16).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+      final key = await identity.transferKey(peer, identity.id, peer.id, id, peerEpoch);
+      final session = RemoteSession(id, identity.id, peer.id, key);
+      final offer = await session.seal('offer', utf8.encode(jsonEncode({'name': name, 'size': size})));
+      _write({...offer, 'to': peer.id, 'epoch': peerEpoch});
+      transfer = RemoteTransfer(session, peer, name, size, RemotePhase.waiting, source: file)..staging = staging;
+      started = true;
+      status = 'Waiting for ${peer.name} to accept';
+      _changed();
+    });
+    if (!started) throw StateError('Relay disconnected');
+  }
 
   Future<void> decide(bool accept) => _queue(() async {
     final current = transfer;
