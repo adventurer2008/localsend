@@ -7,6 +7,7 @@ permissions:
   actions: read
 jobs:
   ios:
+    if: "!contains(github.event.head_commit.message, '[android only]')"
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -32,6 +33,7 @@ jobs:
           xcrun simctl launch "$simulator" "$bundle"
           bash "$GITHUB_WORKSPACE/support/scripts/check-native-receive-smoke.sh"
   android:
+    if: "!contains(github.event.head_commit.message, '[ios only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -40,7 +42,10 @@ jobs:
         run: |
           sudo chmod a+rw /dev/kvm
           image='system-images;android-35;google_apis;x86_64'
-          sdkmanager --install "$image"
+          sdkmanager="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -print -quit)"
+          test -x "$sdkmanager"
+          export PATH="$(dirname "$sdkmanager"):$ANDROID_HOME/platform-tools:$PATH"
+          sdkmanager --install emulator platform-tools "$image"
           printf 'no\n' | avdmanager create avd --force --name remote-smoke --package "$image"
           nohup "$ANDROID_HOME/emulator/emulator" -avd remote-smoke -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
           timeout 240 adb wait-for-device
