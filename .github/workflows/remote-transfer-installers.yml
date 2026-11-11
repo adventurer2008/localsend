@@ -103,16 +103,18 @@ jobs:
         run: |
           args=(--release "--build-number=$BUILD_NUMBER")
           if [[ "$RELEASE_BUILD" != true ]]; then
-            args+=(--target-platform android-arm64)
+            args+=(--target-platform android-arm64 --split-per-abi)
           fi
           flutter build apk "${args[@]}"
       - name: Verify and stage APK
         id: apk
         run: |
-          apk=app/build/app/outputs/flutter-apk/app-release.apk
+          apk_dir=app/build/app/outputs/flutter-apk
+          apk="$apk_dir/app-arm64-v8a-release.apk"
           name=LocalSend-Remote-Android-Vivo-ARM64
           expected_abis=(arm64-v8a)
           if [[ "$RELEASE_BUILD" == true ]]; then
+            apk="$apk_dir/app-release.apk"
             name=LocalSend-Remote-Android
             expected_abis+=(armeabi-v7a x86_64)
           fi
