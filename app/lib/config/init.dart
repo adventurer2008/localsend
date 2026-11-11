@@ -32,8 +32,8 @@ import 'package:localsend_app/util/native/autostart_helper.dart';
 import 'package:localsend_app/util/native/cache_helper.dart';
 import 'package:localsend_app/util/native/channel/android_channel.dart';
 import 'package:localsend_app/util/native/context_menu_helper.dart';
-import 'package:localsend_app/util/native/cross_file_converters.dart';
 import 'package:localsend_app/util/native/device_info_helper.dart';
+import 'package:localsend_app/util/native/incoming_share.dart';
 import 'package:localsend_app/util/native/macos_channel.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_app/util/native/tray_helper.dart';
@@ -53,7 +53,6 @@ import 'package:logging/logging.dart';
 import 'package:refena_flutter/addons.dart';
 import 'package:refena_flutter/refena_flutter.dart';
 import 'package:routerino/routerino.dart';
-import 'package:share_handler/share_handler.dart';
 import 'package:window_manager/window_manager.dart';
 
 final _logger = Logger('Init');
@@ -181,8 +180,6 @@ Future<RefenaContainer> preInit(List<String> args) async {
   return container;
 }
 
-StreamSubscription? _sharedMediaSubscription;
-
 /// Will be called when home page has been initialized
 Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
   await updateSystemOverlayStyle(context);
@@ -255,39 +252,8 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
     }
   }
 
-  bool hasInitialShare = false;
-
-  if (checkPlatformCanReceiveShareIntent()) {
-    final shareHandler = ShareHandlerPlatform.instance;
-
-    if (appStart) {
-      final initialSharedPayload = await shareHandler.getInitialSharedMedia();
-      if (initialSharedPayload != null) {
-        hasInitialShare = true;
-        // ignore: unawaited_futures
-        ref.global.dispatchAsync(
-          _HandleShareIntentAction(
-            payload: initialSharedPayload,
-          ),
-        );
-      }
-    }
-
-    _sharedMediaSubscription?.cancel(); // ignore: unawaited_futures
-    _sharedMediaSubscription = shareHandler.sharedMediaStream.listen((SharedMedia payload) async {
-      await ref.global.dispatchAsync(
-        _HandleShareIntentAction(
-          payload: payload,
-        ),
-      );
-    });
-
-    if (checkPlatform([TargetPlatform.android])) {
-      // Both messages above travel through the same messenger in order, so the stream is
-      // guaranteed to be attached natively before MainActivity replays held-back intents.
-      await flushPendingShareIntentsAndroid();
-    }
-  }
+  if (!context.mounted) return;
+  final hasInitialShare = checkPlatformCanReceiveShareIntent() && await startIncomingShares(context, ref);
 
   if (appStart && !hasInitialShare && (checkPlatformWithGallery() || checkPlatformCanReceiveShareIntent())) {
     // Clear cache on every app start.
@@ -295,7 +261,7 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
     ref.global.dispatchAsync(ClearCacheAction()); // ignore: unawaited_futures
   }
 
-  if (!ref.read(persistenceProvider).isFirstAppStart) {
+  if (!hasInitialShare && !ref.read(persistenceProvider).isFirstAppStart) {
     WhatsNewPage? whatsNew = WhatsNewPage.fromLastVersion(lastVersion: ref.read(persistenceProvider).getWhatsNew());
     if (whatsNew != null) {
       // ignore: unawaited_futures
@@ -313,32 +279,6 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
     ref.redux(purchaseProvider).dispatchAsync(InitPurchaseStream());
   }
   // [FOSS_REMOVE_END]
-}
-
-class _HandleShareIntentAction extends AsyncGlobalAction {
-  final SharedMedia payload;
-
-  _HandleShareIntentAction({
-    required this.payload,
-  });
-
-  @override
-  Future<void> reduce() async {
-    final message = payload.content;
-    if (message != null && message.trim().isNotEmpty) {
-      ref.redux(selectedSendingFilesProvider).dispatch(AddMessageAction(message: message));
-    }
-    await ref
-        .redux(selectedSendingFilesProvider)
-        .dispatchAsync(
-          AddFilesAction(
-            files: payload.attachments?.where((a) => a != null).cast<SharedAttachment>() ?? <SharedAttachment>[],
-            converter: CrossFileConverters.convertSharedAttachment,
-          ),
-        );
-
-    ref.redux(homePageControllerProvider).dispatch(ChangeTabAction(HomeTab.send));
-  }
 }
 
 class _HandleAppStartArgumentsAction extends AsyncGlobalAction {

@@ -9,6 +9,7 @@ import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_isolates/util/file_path_helper.dart';
 import 'package:localsend_isolates/util/logger.dart';
 import 'package:logging/logging.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:path_provider_foundation/path_provider_foundation.dart';
 import 'package:refena_flutter/refena_flutter.dart';
@@ -35,14 +36,16 @@ Future<void> _clear(RootIsolateToken token) async {
     FilePicker.clearTemporaryFiles(),
     PhotoManager.clearFileCache(),
     checkPlatform([TargetPlatform.iOS, TargetPlatform.android])
-        ? getTemporaryDirectory().then((cacheDir) {
-            cacheDir.list().listen((event) {
+        ? getTemporaryDirectory().then((cacheDir) async {
+            await for (final event in cacheDir.list(followLinks: false)) {
               if (event is File) {
                 event.delete().then((_) {}).catchError((error) {
                   _logger.warning('Failed to delete file: $error');
                 });
+              } else if (event is Directory && p.basename(event.path) == 'incoming-share') {
+                await _clearStaleShares(event);
               }
-            });
+            }
           })
         : Future.value(),
     checkPlatform([TargetPlatform.iOS])
@@ -57,6 +60,7 @@ Future<void> _clear(RootIsolateToken token) async {
                 }
 
                 final directory = Directory(directoryPath);
+                await _clearStaleShares(Directory(p.join(directory.path, 'IncomingShares')), preserveInbox: true);
 
                 // delete contents of the directory (only files, not directories)
                 await for (final entry in directory.list(recursive: false, followLinks: false)) {
@@ -73,5 +77,15 @@ Future<void> _clear(RootIsolateToken token) async {
     await futures;
   } catch (e) {
     _logger.warning('Failed to clear cache: $e');
+  }
+}
+
+Future<void> _clearStaleShares(Directory root, {bool preserveInbox = false}) async {
+  if (!await root.exists()) return;
+  final cutoff = DateTime.now().subtract(const Duration(days: 1));
+  await for (final entry in root.list(followLinks: false)) {
+    if (entry is! Directory || !(await entry.stat()).modified.isBefore(cutoff)) continue;
+    if (preserveInbox && await File(p.join(entry.path, 'manifest.json')).exists()) continue;
+    await entry.delete(recursive: true);
   }
 }
