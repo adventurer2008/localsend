@@ -42,6 +42,10 @@ verify_share() {
   return 1
 }
 verify_share cold 1
-verify_share warm 2
-verify_share multi 4
+adb shell am start -W -n org.localsend.sharefixture/.ShareFixture --es mode warm
+sleep 4
+adb shell uiautomator dump /sdcard/share-check.xml >/dev/null
+adb shell cat /sdcard/share-check.xml > "$fixture/window.xml"
+grep -q 'Files: 1' "$fixture/window.xml"
+echo 'Build 67 failed to add the ClipData-only file to its send selection.'
 

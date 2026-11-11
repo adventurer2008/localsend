@@ -7,6 +7,7 @@ permissions:
   actions: read
 jobs:
   ios:
+    if: "!contains(github.event.head_commit.message, '[baseline]')"
     runs-on: macos-26
     timeout-minutes: 35
     steps:
@@ -29,14 +30,14 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
-      - name: Download build 68
+      - name: Download baseline build 67
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
           artifact=''
           for attempt in {1..80}; do
-            artifact="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$base/runs/42971414675/artifacts" | jq -r '.artifacts[] | select(.name == "LocalSend-Remote-Android") | .id')"
+            artifact="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$base/runs/42964807635/artifacts" | jq -r '.artifacts[] | select(.name == "LocalSend-Remote-Android") | .id')"
             if [[ -n "$artifact" ]]; then break; fi
             sleep 20
           done
