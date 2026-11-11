@@ -164,7 +164,7 @@ void main() {
       final larger = await File(p.join(temp.path, 'interrupted.bin')).open(mode: FileMode.write);
       await larger.truncate(24 * 1024 * 1024);
       await larger.close();
-      await sender.offer(bobCard, XFile(larger.path));
+      await sender.offerFiles(bobCard, [(file: XFile(empty.path), name: 'empty.bin'), (file: XFile(larger.path), name: 'interrupted.bin')]);
       await until(() => receiver.transfer?.phase == RemotePhase.offered);
       await receiver.decide(true);
       await until(() => (receiver.transfer?.transferred ?? 0) > 0);
@@ -187,6 +187,32 @@ void main() {
       expect(await File(receiver.savedPath!).readAsBytes(), content);
       expect(p.basename(receiver.savedPath!), 'after-reconnect.bin');
       expect(await retrySource.exists(), isFalse);
+
+      final previousPaths = receiver.savedPaths;
+      final batch = [
+        (file: outgoing, name: 'report.bin'),
+        (file: XFile(empty.path), name: 'Report.bin'),
+        (file: XFile.fromData(Uint8List.fromList([1, 2, 3])), name: 'third.bin'),
+      ];
+      await reconnected.offerFiles(bobCard, batch);
+      await until(() => receiver.transfer?.phase == RemotePhase.offered);
+      expect(receiver.transfer?.fileCount, 3);
+      expect(receiver.transfer?.size, content.length + 3);
+      expect(reconnected.transfer?.transferred, 0);
+      await receiver.decide(false);
+      await until(() => reconnected.transfer == null);
+      expect(receiver.savedPaths, previousPaths);
+
+      await reconnected.offerFiles(bobCard, batch);
+      await until(() => receiver.transfer?.phase == RemotePhase.offered);
+      await receiver.decide(true);
+      await until(() => reconnected.transfer == null);
+      expect(reconnected.status, 'Sent 3 files to Bob');
+      expect(receiver.savedPaths.map(p.basename), ['report.bin', 'Report (2).bin', 'third.bin']);
+      expect(receiver.savedPaths.map(p.dirname).toSet(), hasLength(1));
+      expect(await File(receiver.savedPaths[0]).readAsBytes(), content);
+      expect(await File(receiver.savedPaths[1]).length(), 0);
+      expect(await File(receiver.savedPaths[2]).readAsBytes(), [1, 2, 3]);
     },
     skip: Platform.environment['LOCALSEND_RELAY_TEST'] != '1' ? 'Set LOCALSEND_RELAY_TEST=1 after npm ci in relay/' : false,
   );

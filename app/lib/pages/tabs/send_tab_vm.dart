@@ -36,6 +36,7 @@ class SendTabVm {
   final Future<void> Function(BuildContext context, SendMode mode) onTapSendMode;
   final Future<void> Function(BuildContext context, Device device) onTapDevice;
   final Future<void> Function(BuildContext context, Device device) onTapDeviceMultiSend;
+  final Future<void> Function(BuildContext context, Device device, List<CrossFile> files) onDropFiles;
 
   const SendTabVm({
     required this.sendMode,
@@ -48,6 +49,7 @@ class SendTabVm {
     required this.onTapSendMode,
     required this.onTapDevice,
     required this.onTapDeviceMultiSend,
+    required this.onDropFiles,
   });
 }
 
@@ -156,6 +158,7 @@ final sendTabVmProvider = ViewProvider((ref) {
 
       await _sendToDiscoveredDevice(ref, context, device, files, background: false);
     },
+    onDropFiles: (context, device, files) => _sendToDiscoveredDevice(ref, context, device, files, background: false),
     onTapDeviceMultiSend: (context, device) async {
       final session = ref.read(sendProvider).values.firstWhereOrNull((s) => s.target.ip == device.ip);
       if (session != null) {

@@ -154,53 +154,56 @@ class AddDirectoryAction extends AsyncReduxAction<SelectedSendingFilesNotifier, 
 
   @override
   Future<List<CrossFile>> reduce() async {
-    _logger.info('Reading files in $directoryPath');
-    final newFiles = <CrossFile>[];
-    final directoryName = p.basename(directoryPath);
-    final sendIgnore = SendIgnore();
-    await for (final entity in Directory(directoryPath).list(recursive: true)) {
-      if (entity is File) {
-        final innerRelative = p.relative(entity.path, from: directoryPath).replaceAll('\\', '/');
-        final relative = '$directoryName/$innerRelative';
-        if (sendIgnore.isIgnoreFile(p.basename(entity.path))) {
-          sendIgnore.loadIgnoreContent(
-            parentPath: innerRelative.contains('/') ? p.dirname(innerRelative) : null,
-            ignoreContents: await entity.readAsLines(),
-          );
-          _logger.info('Loaded ignore file: $innerRelative');
-          continue;
-        } else if (sendIgnore.isIgnored(innerRelative)) {
-          _logger.info('Ignored: $innerRelative');
-          continue;
-        }
-
-        _logger.info('Add file $relative');
-
-        final metadata = await readFileMetadata(path: entity.path);
-        final file = CrossFile(
-          name: relative,
-          fileType: relative.guessFileType(),
-          size: entity.lengthSync(),
-          thumbnail: null,
-          asset: null,
-          path: entity.path,
-          bytes: null,
-          lastModified: metadata?.modified,
-          lastAccessed: metadata?.accessed,
-        );
-
-        final isAlreadySelect = state.any((element) => element.isSameFile(otherFile: file));
-        if (!isAlreadySelect) {
-          newFiles.add(file);
-        }
-      }
-    }
-
+    final newFiles = await readDirectoryForSending(directoryPath);
     return List.unmodifiable([
       ...state,
-      ...newFiles,
+      ...newFiles.where((file) => !state.any((element) => element.isSameFile(otherFile: file))),
     ]);
   }
+}
+
+/// Reads a directory with the same paths and ignore rules as the file picker.
+Future<List<CrossFile>> readDirectoryForSending(String directoryPath) async {
+  _logger.info('Reading files in $directoryPath');
+  final newFiles = <CrossFile>[];
+  final directoryName = p.basename(directoryPath);
+  final sendIgnore = SendIgnore();
+  await for (final entity in Directory(directoryPath).list(recursive: true)) {
+    if (entity is File) {
+      final innerRelative = p.relative(entity.path, from: directoryPath).replaceAll('\\', '/');
+      final relative = '$directoryName/$innerRelative';
+      if (sendIgnore.isIgnoreFile(p.basename(entity.path))) {
+        sendIgnore.loadIgnoreContent(
+          parentPath: innerRelative.contains('/') ? p.dirname(innerRelative) : null,
+          ignoreContents: await entity.readAsLines(),
+        );
+        _logger.info('Loaded ignore file: $innerRelative');
+        continue;
+      } else if (sendIgnore.isIgnored(innerRelative)) {
+        _logger.info('Ignored: $innerRelative');
+        continue;
+      }
+
+      _logger.info('Add file $relative');
+
+      final metadata = await readFileMetadata(path: entity.path);
+      final file = CrossFile(
+        name: relative,
+        fileType: relative.guessFileType(),
+        size: entity.lengthSync(),
+        thumbnail: null,
+        asset: null,
+        path: entity.path,
+        bytes: null,
+        lastModified: metadata?.modified,
+        lastAccessed: metadata?.accessed,
+      );
+
+      newFiles.add(file);
+    }
+  }
+
+  return newFiles;
 }
 
 /// A special [AddDirectoryAction] specifically for Android.

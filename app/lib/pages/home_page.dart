@@ -11,6 +11,7 @@ import 'package:localsend_app/pages/tabs/send_tab.dart';
 import 'package:localsend_app/pages/tabs/settings_tab.dart';
 import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
 import 'package:localsend_app/util/native/cross_file_converters.dart';
+import 'package:localsend_app/widget/device_drop_target.dart';
 import 'package:localsend_app/widget/responsive_builder.dart';
 import 'package:refena_flutter/refena_flutter.dart';
 
@@ -83,6 +84,9 @@ class _HomePageState extends State<HomePage> with Refena {
         });
       },
       onDragDone: (event) async {
+        if (event.files.isEmpty || ModalRoute.isCurrentOf(context) != true) return;
+        if (Platform.isWindows && vm.currentTab == HomeTab.send && await DeviceDropTarget.sendDroppedFiles(context, event)) return;
+        if (!context.mounted || ModalRoute.isCurrentOf(context) != true) return;
         // the drop may contain a mix of files and directories
         final droppedDirectories = event.files.where((file) => Directory(file.path).existsSync()).toList();
         final droppedFiles = event.files.where((file) => !Directory(file.path).existsSync()).toList();
@@ -101,7 +105,7 @@ class _HomePageState extends State<HomePage> with Refena {
                 ),
               );
         }
-        vm.changeTab(HomeTab.send);
+        if (context.mounted && ModalRoute.isCurrentOf(context) == true) vm.changeTab(HomeTab.send);
       },
       child: ResponsiveBuilder(
         builder: (sizingInformation) {
@@ -148,7 +152,7 @@ class _HomePageState extends State<HomePage> with Refena {
                             SettingsTab(),
                           ],
                         ),
-                        if (_dragAndDropIndicator)
+                        if (_dragAndDropIndicator && (!Platform.isWindows || vm.currentTab != HomeTab.send))
                           Container(
                             width: double.infinity,
                             decoration: BoxDecoration(
