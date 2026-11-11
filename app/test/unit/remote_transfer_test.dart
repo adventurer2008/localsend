@@ -140,8 +140,9 @@ void main() {
       expect(sender.status, contains('declined'));
       expect(receiver.savedPath, isNull);
 
-      await sender.offer(bobCard, outgoing);
+      await sender.offer(bobCard, outgoing, fileName: 'selected-name.bin');
       await until(() => receiver.transfer?.phase == RemotePhase.offered);
+      expect(receiver.transfer?.name, 'selected-name.bin');
       await receiver.decide(true);
       await until(() => receiver.savedPath != null && sender.transfer == null);
       expect(await File(receiver.savedPath!).readAsBytes(), content);
@@ -169,6 +170,19 @@ void main() {
       expect(receiver.savedPath, previousSave);
       final receiverFiles = Directory(p.join(temp.path, 'Bob', 'LocalSend Remote'));
       expect(await receiverFiles.list().length, 1);
+
+      final reconnected = client(alice, 'Alice');
+      await until(() => reconnected.online.containsKey(bob.id) && receiver.online.containsKey(alice.id));
+      final retrySource = await temp.createTemp('staged-outgoing-');
+      final retryFile = await File(p.join(retrySource.path, 'source')).writeAsBytes(content);
+      await reconnected.offer(bobCard, XFile(retryFile.path), fileName: 'after-reconnect.bin', staging: retrySource);
+      await until(() => receiver.transfer?.phase == RemotePhase.offered);
+      expect(reconnected.transfer?.transferred, 0);
+      await receiver.decide(true);
+      await until(() => reconnected.status.startsWith('Sent'));
+      expect(await File(receiver.savedPath!).readAsBytes(), content);
+      expect(p.basename(receiver.savedPath!), 'after-reconnect.bin');
+      expect(await retrySource.exists(), isFalse);
     },
     skip: Platform.environment['LOCALSEND_RELAY_TEST'] != '1' ? 'Set LOCALSEND_RELAY_TEST=1 after npm ci in relay/' : false,
   );

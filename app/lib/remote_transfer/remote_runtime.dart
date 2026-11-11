@@ -28,6 +28,30 @@ class RemoteRuntime extends ChangeNotifier {
 
   Future<void> initialize() => _initializing ??= _initialize();
 
+  Map<String, RemotePeer> get peers => client?.peers ?? settings?.peers ?? const {};
+
+  Future<RemoteClient?> waitForPeer(String id) async {
+    if (client?.online.containsKey(id) == true) return client;
+    if (_paused || settings?.url.isNotEmpty != true) return null;
+    final available = Completer<RemoteClient>();
+    void check() {
+      final connection = client;
+      if (connection != null && connection.online.containsKey(id) && !available.isCompleted) {
+        available.complete(connection);
+      }
+    }
+
+    addListener(check);
+    try {
+      await available.future.timeout(const Duration(seconds: 8));
+      return client?.online.containsKey(id) == true ? client : null;
+    } on TimeoutException {
+      return null;
+    } finally {
+      removeListener(check);
+    }
+  }
+
   Future<void> _initialize() async {
     try {
       settings = await RemoteSettings.load();

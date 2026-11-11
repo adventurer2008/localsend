@@ -14,6 +14,9 @@ import 'package:localsend_app/provider/network/scan_facade.dart';
 import 'package:localsend_app/provider/network/send_provider.dart';
 import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
 import 'package:localsend_app/provider/settings_provider.dart';
+import 'package:localsend_app/remote_transfer/remote_page.dart';
+import 'package:localsend_app/remote_transfer/remote_route.dart';
+import 'package:localsend_app/remote_transfer/remote_runtime.dart';
 import 'package:localsend_app/widget/dialogs/add_file_dialog.dart';
 import 'package:localsend_app/widget/dialogs/address_input_dialog.dart';
 import 'package:localsend_app/widget/dialogs/favorite_dialog.dart';
@@ -105,17 +108,11 @@ final sendTabVmProvider = ViewProvider((ref) {
 
         files = ref.read(selectedSendingFilesProvider);
 
-        if (files.isEmpty) {
+        if (files.isEmpty || !context.mounted) {
           return;
         }
 
-        await ref
-            .notifier(sendProvider)
-            .startSession(
-              target: device,
-              files: files,
-              background: false,
-            );
+        await _sendToDiscoveredDevice(ref, context, device, files, background: false);
       }
     },
     onTapSendMode: (context, mode) async {
@@ -153,17 +150,11 @@ final sendTabVmProvider = ViewProvider((ref) {
 
       files = ref.read(selectedSendingFilesProvider);
 
-      if (files.isEmpty) {
+      if (files.isEmpty || !context.mounted) {
         return;
       }
 
-      await ref
-          .notifier(sendProvider)
-          .startSession(
-            target: device,
-            files: files,
-            background: false,
-          );
+      await _sendToDiscoveredDevice(ref, context, device, files, background: false);
     },
     onTapDeviceMultiSend: (context, device) async {
       final session = ref.read(sendProvider).values.firstWhereOrNull((s) => s.target.ip == device.ip);
@@ -200,7 +191,7 @@ final sendTabVmProvider = ViewProvider((ref) {
 
       files = ref.read(selectedSendingFilesProvider);
 
-      if (files.isEmpty) {
+      if (files.isEmpty || !context.mounted) {
         return;
       }
 
@@ -209,16 +200,32 @@ final sendTabVmProvider = ViewProvider((ref) {
         ref.notifier(sendProvider).closeSession(session.sessionId);
       }
 
-      await ref
-          .notifier(sendProvider)
-          .startSession(
-            target: device,
-            files: files,
-            background: true,
-          );
+      await _sendToDiscoveredDevice(ref, context, device, files, background: true);
     },
   );
 });
+
+Future<void> _sendToDiscoveredDevice(Ref ref, BuildContext context, Device device, List<CrossFile> files, {required bool background}) async {
+  final runtime = ref.read(remoteRuntimeProvider);
+  final trusted = runtime.peers.values.firstWhereOrNull((peer) => peer.lanFingerprint == device.fingerprint);
+  final target = trusted == null ? device : await reachableTrustedLan(ref, trusted, candidate: device);
+  if (!context.mounted) return;
+  if (target == null && trusted != null) {
+    await context.push(() => RemotePage(selectedFiles: files, relayTarget: trusted));
+    return;
+  }
+  if (target?.ip != null && trusted == null && !await canTryLan()) {
+    if (!context.mounted) return;
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(zh ? '当前无法使用局域网。跨网发送请使用「可信设备」。' : 'Local network unavailable. Use Trusted devices for remote transfers.')),
+    );
+    return;
+  }
+  if (context.mounted && target != null) {
+    await ref.notifier(sendProvider).startSession(target: target, files: files, background: background);
+  }
+}
 
 class SendTabInitAction extends AsyncGlobalAction {
   final BuildContext context;
@@ -228,7 +235,7 @@ class SendTabInitAction extends AsyncGlobalAction {
   @override
   Future<void> reduce() async {
     final devices = ref.read(nearbyDevicesProvider).devices;
-    if (devices.isEmpty) {
+    if (devices.isEmpty && await canTryLan()) {
       await dispatchAsync(StartSmartScan());
     }
   }

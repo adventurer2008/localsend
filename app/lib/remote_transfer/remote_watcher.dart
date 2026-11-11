@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:localsend_app/remote_transfer/remote_client.dart';
@@ -23,6 +24,10 @@ class _RemoteWatcherState extends State<RemoteWatcher> with Refena, WidgetsBindi
   RemoteRuntime? _runtime;
   String? _shownOffer;
   bool _opening = false;
+  StreamSubscription<List<ConnectivityResult>>? _networkChanges;
+  Timer? _networkRefresh;
+
+  bool get _mobile => !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
 
   @override
   void initState() {
@@ -31,8 +36,13 @@ class _RemoteWatcherState extends State<RemoteWatcher> with Refena, WidgetsBindi
     ensureRef((ref) {
       _runtime = ref.read(remoteRuntimeProvider);
       _runtime!.addListener(_onChanged);
-      // postInit starts networking once the local HTTP identity is ready.
     });
+    if (_mobile) {
+      _networkChanges = Connectivity().onConnectivityChanged.listen((_) {
+        _networkRefresh?.cancel();
+        _networkRefresh = Timer(const Duration(milliseconds: 400), () => _runtime?.ensureConnected(refresh: true));
+      });
+    }
   }
 
   void _onChanged() {
@@ -70,13 +80,15 @@ class _RemoteWatcherState extends State<RemoteWatcher> with Refena, WidgetsBindi
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _runtime?.ensureConnected(refresh: defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
+      _runtime?.ensureConnected(refresh: _mobile);
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _networkRefresh?.cancel();
+    unawaited(_networkChanges?.cancel());
     _runtime?.removeListener(_onChanged);
     _runtime?.dispose();
     super.dispose();

@@ -1,30 +1,34 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:localsend_app/gen/strings.g.dart';
-import 'package:localsend_app/provider/device_info_provider.dart';
-import 'package:localsend_app/provider/http_provider.dart';
+import 'package:localsend_app/model/cross_file.dart';
 import 'package:localsend_app/provider/network/nearby_devices_provider.dart';
-import 'package:localsend_app/provider/network/scan_facade.dart';
 import 'package:localsend_app/provider/network/send_provider.dart';
 import 'package:localsend_app/remote_transfer/remote_client.dart';
 import 'package:localsend_app/remote_transfer/remote_identity.dart';
+import 'package:localsend_app/remote_transfer/remote_route.dart';
 import 'package:localsend_app/remote_transfer/remote_runtime.dart';
 import 'package:localsend_app/remote_transfer/remote_settings.dart';
 import 'package:localsend_app/util/native/cross_file_converters.dart';
 import 'package:localsend_app/util/native/open_file.dart' as saved_file;
-import 'package:localsend_isolates/model/device.dart';
 import 'package:localsend_isolates/util/file_path_helper.dart';
 import 'package:localsend_isolates/util/file_size_helper.dart';
-import 'package:localsend_isolates/util/rust.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:refena_flutter/refena_flutter.dart';
+import 'package:uri_content/uri_content.dart';
 
 String remoteTransferLabel(BuildContext context) => Localizations.localeOf(context).languageCode == 'zh' ? '可信设备' : 'Trusted devices';
 
 class RemotePage extends StatefulWidget {
-  const RemotePage({super.key});
+  final List<CrossFile> selectedFiles;
+  final RemotePeer? relayTarget;
+
+  const RemotePage({this.selectedFiles = const [], this.relayTarget, super.key});
 
   @override
   State<RemotePage> createState() => _RemotePageState();
@@ -53,7 +57,11 @@ class _RemotePageState extends State<RemotePage> {
       await runtime.initialize();
       if (!mounted) return;
       setState(() {});
-      unawaited(_scan(context.ref));
+      if (widget.relayTarget case final target?) {
+        unawaited(_send(target, relayOnly: true));
+      } else if (await canTryLan() && mounted) {
+        unawaited(scanTrustedLan(context.ref));
+      }
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not open the device’s secure storage');
     }
@@ -61,14 +69,6 @@ class _RemotePageState extends State<RemotePage> {
 
   void _runtimeChanged() {
     if (mounted) setState(() {});
-  }
-
-  Future<void> _scan(Ref ref) async {
-    try {
-      await ref.global.dispatchAsync(StartSmartScan());
-    } catch (_) {
-      // Local discovery is optional when using the relay.
-    }
   }
 
   void _connect() {
@@ -98,66 +98,71 @@ class _RemotePageState extends State<RemotePage> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
   }
 
-  Future<void> _send(RemotePeer peer) async {
+  Future<void> _send(RemotePeer peer, {bool relayOnly = false}) async {
     if (_choosing || _client?.transfer != null) return;
     final ref = context.ref;
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
     setState(() {
       _choosing = true;
       _error = null;
     });
     try {
-      final file = await openFile();
-      if (file == null || !mounted) return;
-      final local = await _reachableLan(ref, peer);
+      final file = widget.selectedFiles.isEmpty ? await openFile() : null;
+      if ((file == null && widget.selectedFiles.isEmpty) || !mounted) return;
+      final local = relayOnly ? null : await reachableTrustedLan(ref, peer, discover: true);
       if (!mounted) return;
       if (_client?.transfer != null) throw StateError('Finish the current transfer first');
       if (local != null) {
-        final selected = await CrossFileConverters.convertXFile(file);
+        final selected = file == null ? widget.selectedFiles : [await CrossFileConverters.convertXFile(file)];
         if (!mounted) return;
-        await ref.notifier(sendProvider).startSession(target: local, files: [selected], background: false);
+        await ref.notifier(sendProvider).startSession(target: local, files: selected, background: false);
       } else {
-        final client = _client;
-        if (client == null || client.online[peer.id] == null) throw StateError('This device is offline');
-        await client.offer(peer, file);
+        if (widget.selectedFiles.length > 1) {
+          throw StateError(zh ? '中继目前一次只能发一个文件，请选一个文件重试。' : 'The relay supports one file per transfer. Select a single file and retry.');
+        }
+        final client = await _runtime!.waitForPeer(peer.id);
+        if (!mounted) return;
+        if (client == null) throw StateError(zh ? '对方未连接到中继' : 'This device is offline on the relay');
+        if (file != null) {
+          await client.offer(peer, file);
+        } else {
+          await _offerSelected(client, peer, widget.selectedFiles.single);
+        }
       }
     } on StateError catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not start the transfer');
+      if (mounted) setState(() => _error = zh ? '无法开始传输' : 'Could not start the transfer');
     } finally {
       if (mounted) setState(() => _choosing = false);
     }
   }
 
-  Device? _lanCandidate(Ref ref, RemotePeer peer) {
-    final local = ref.read(nearbyDevicesProvider).devices[peer.lanFingerprint];
-    return local != null && local.https && local.ip != null ? local : null;
-  }
-
-  Future<Device?> _reachableLan(Ref ref, RemotePeer peer) async {
-    final origin = ref.read(deviceFullInfoProvider);
-    if (!origin.https || origin.port < 0) return null;
-    final known = _lanCandidate(ref, peer);
-    if (known != null && await _probeLan(ref, origin, known)) return known;
-    await _scan(ref).timeout(const Duration(seconds: 2), onTimeout: () {});
-    if (!mounted) return null;
-    final discovered = _lanCandidate(ref, peer);
-    if (discovered == null || (discovered.ip == known?.ip && discovered.port == known?.port)) return null;
-    return await _probeLan(ref, origin, discovered) ? discovered : null;
-  }
-
-  Future<bool> _probeLan(Ref ref, Device origin, Device local) async {
-    try {
-      await ref
-          .read(httpProvider)
-          .pinnedTo(local.fingerprint)
-          .register(protocol: local.getProtocolType(), ip: local.ip!, port: local.port, payload: origin.toRegisterDto())
-          .timeout(const Duration(seconds: 2));
-      return true;
-    } catch (_) {
-      // An old discovery result must not prevent sending via the relay.
-      return false;
+  Future<void> _offerSelected(RemoteClient client, RemotePeer peer, CrossFile selected) async {
+    if (selected.bytes case final bytes?) {
+      await client.offer(peer, XFile.fromData(Uint8List.fromList(bytes), name: selected.name), fileName: selected.name);
+      return;
     }
+    final path = selected.path!;
+    if (!path.startsWith('content://')) {
+      await client.offer(peer, XFile(path), fileName: selected.name);
+      return;
+    }
+    // The Android document picker can return a URI rather than a filesystem path.
+    // Stage it on disk so the relay can read chunks without loading the file in memory.
+    final staging = await (await getTemporaryDirectory()).createTemp('localsend-relay-');
+    final file = File(p.join(staging.path, 'source'));
+    try {
+      await UriContent().getContentStream(Uri.parse(path)).cast<List<int>>().pipe(file.openWrite());
+      if (mounted) {
+        await client.offer(peer, XFile(file.path), fileName: selected.name, staging: staging);
+        return;
+      }
+    } catch (_) {
+      await staging.delete(recursive: true);
+      rethrow;
+    }
+    await staging.delete(recursive: true);
   }
 
   @override
@@ -242,16 +247,16 @@ class _RemotePageState extends State<RemotePage> {
                       subtitle: Text(saved),
                       onTap: () => saved_file.openFile(context, saved.guessFileType(), saved),
                     ),
-                  for (final peer in (client?.peers ?? settings.peers).values)
+                  for (final peer in _runtime!.peers.values)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.devices),
                       title: Text(peer.name),
                       subtitle: Text(
-                        nearby[peer.lanFingerprint]?.https == true
-                            ? 'Local network'
-                            : client?.online.containsKey(peer.id) == true
+                        client?.online.containsKey(peer.id) == true
                             ? 'Online via relay'
+                            : nearby[peer.lanFingerprint]?.https == true
+                            ? 'Discovered on local network'
                             : 'Offline',
                       ),
                       onTap: busy ? null : () => _send(peer),

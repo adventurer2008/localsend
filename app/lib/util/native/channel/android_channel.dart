@@ -64,6 +64,8 @@ Future<bool> requestLocalNetworkPermissionAndroid() async {
   }
 }
 
+Future<bool> hasLocalNetworkTransportAndroid() async => await _methodChannel.invokeMethod<bool>('hasLocalNetworkTransport') ?? false;
+
 Future<void> openContentUri({
   required String uri,
 }) async {

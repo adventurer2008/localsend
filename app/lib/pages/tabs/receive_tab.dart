@@ -10,6 +10,7 @@ import 'package:localsend_app/provider/local_ip_provider.dart';
 import 'package:localsend_app/provider/network/server/server_provider.dart';
 import 'package:localsend_app/provider/settings_provider.dart';
 import 'package:localsend_app/remote_transfer/remote_page.dart';
+import 'package:localsend_app/remote_transfer/remote_runtime.dart';
 import 'package:localsend_app/widget/animations/initial_fade_transition.dart';
 import 'package:localsend_app/widget/column_list_view.dart';
 import 'package:localsend_app/widget/custom_icon_button.dart';
@@ -90,21 +91,7 @@ class _ReceiveTabState extends State<ReceiveTab> {
                           fit: BoxFit.scaleDown,
                           child: Text(serverState?.alias ?? alias, style: const TextStyle(fontSize: 48)),
                         ),
-                        Visibility(
-                          visible: serverState == null,
-                          maintainSize: true,
-                          maintainAnimation: true,
-                          maintainState: true,
-                          child: InitialFadeTransition(
-                            duration: const Duration(milliseconds: 300),
-                            delay: const Duration(milliseconds: 500),
-                            child: Text(
-                              t.general.offline,
-                              style: const TextStyle(fontSize: 24),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
+                        _ReceiveStatus(lanRunning: serverState != null),
                       ],
                     ),
                   ),
@@ -137,6 +124,41 @@ class _ReceiveTabState extends State<ReceiveTab> {
           toggleAdvanced: _toggleAdvanced,
         ),
       ],
+    );
+  }
+}
+
+class _ReceiveStatus extends StatelessWidget {
+  final bool lanRunning;
+
+  const _ReceiveStatus({required this.lanRunning});
+
+  @override
+  Widget build(BuildContext context) {
+    final runtime = context.ref.read(remoteRuntimeProvider);
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
+    return ListenableBuilder(
+      listenable: runtime,
+      builder: (context, _) {
+        final configured = runtime.settings?.url.isNotEmpty == true;
+        final relayConnected = runtime.client?.connected == true;
+        return Visibility(
+          visible: configured || !lanRunning,
+          maintainSize: true,
+          maintainAnimation: true,
+          maintainState: true,
+          child: Text(
+            configured
+                ? [
+                    if (zh) lanRunning ? '局域网服务已开启' : '局域网服务未运行' else lanRunning ? 'Local server running' : 'Local server stopped',
+                    if (zh) relayConnected ? '中继已连接' : '中继未连接' else relayConnected ? 'Relay connected' : 'Relay disconnected',
+                  ].join('\n')
+                : t.general.offline,
+            style: TextStyle(fontSize: configured ? 17 : 24),
+            textAlign: TextAlign.center,
+          ),
+        );
+      },
     );
   }
 }
