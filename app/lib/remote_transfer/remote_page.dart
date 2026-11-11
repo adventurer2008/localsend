@@ -9,10 +9,9 @@ import 'package:localsend_app/provider/http_provider.dart';
 import 'package:localsend_app/provider/network/nearby_devices_provider.dart';
 import 'package:localsend_app/provider/network/scan_facade.dart';
 import 'package:localsend_app/provider/network/send_provider.dart';
-import 'package:localsend_app/provider/security_provider.dart';
-import 'package:localsend_app/provider/settings_provider.dart';
 import 'package:localsend_app/remote_transfer/remote_client.dart';
 import 'package:localsend_app/remote_transfer/remote_identity.dart';
+import 'package:localsend_app/remote_transfer/remote_runtime.dart';
 import 'package:localsend_app/remote_transfer/remote_settings.dart';
 import 'package:localsend_app/util/native/cross_file_converters.dart';
 import 'package:localsend_app/util/native/open_file.dart' as saved_file;
@@ -32,9 +31,10 @@ class RemotePage extends StatefulWidget {
 }
 
 class _RemotePageState extends State<RemotePage> {
-  RemoteSettings? _settings;
-  RemoteIdentity? _identity;
-  RemoteClient? _client;
+  RemoteRuntime? _runtime;
+  RemoteSettings? get _settings => _runtime?.settings;
+  RemoteIdentity? get _identity => _runtime?.identity;
+  RemoteClient? get _client => _runtime?.client;
   bool _choosing = false;
   String? _error;
 
@@ -46,16 +46,21 @@ class _RemotePageState extends State<RemotePage> {
 
   Future<void> _load() async {
     try {
-      final settings = await RemoteSettings.load();
-      final identity = await RemoteIdentity.load();
+      final runtime = context.ref.read(remoteRuntimeProvider);
+      _runtime = runtime;
+      runtime.openPages++;
+      runtime.addListener(_runtimeChanged);
+      await runtime.initialize();
       if (!mounted) return;
-      _settings = settings;
-      _identity = identity;
-      _connect();
+      setState(() {});
       unawaited(_scan(context.ref));
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not open the device’s secure storage');
     }
+  }
+
+  void _runtimeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _scan(Ref ref) async {
@@ -67,17 +72,8 @@ class _RemotePageState extends State<RemotePage> {
   }
 
   void _connect() {
-    _client?.dispose();
-    _client = null;
-    final settings = _settings!;
     setState(() => _error = null);
-    if (settings.url.isEmpty) return;
-    final client = RemoteClient(identity: _identity!, uri: RemoteSettings.relayUri(settings.url), peers: settings.peers);
-    _client = client;
-    client.addListener(() {
-      if (mounted) setState(() {});
-    });
-    unawaited(client.run());
+    _runtime!.reconnect();
   }
 
   Future<String?> _prompt(String title, String label, [String initial = '']) => showDialog<String>(
@@ -89,39 +85,11 @@ class _RemotePageState extends State<RemotePage> {
     final value = await _prompt('Relay server', 'wss://relay.example.com/v1/relay', _settings!.url);
     if (value == null || !mounted) return;
     try {
-      await _settings!.setUrl(value);
-      if (mounted) _connect();
+      await _runtime!.setUrl(value);
     } on FormatException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not save the relay address');
-    }
-  }
-
-  Future<void> _addPeer() async {
-    final value = await _prompt('Add trusted device', 'Device card');
-    if (value == null || !mounted) return;
-    try {
-      final peer = RemotePeer.parse(value);
-      final peers = _settings!.peers;
-      if (peer.id == _identity!.id || peers.containsKey(peer.id) || peers.values.any((item) => item.lanFingerprint == peer.lanFingerprint)) {
-        throw const FormatException('This device is already known. Remove the existing entry before pairing it again.');
-      }
-      await _settings!.setPeers([...peers.values, peer]);
-      if (mounted) _connect();
-    } on FormatException catch (error) {
-      if (mounted) setState(() => _error = error.message);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Could not save the device');
-    }
-  }
-
-  Future<void> _removePeer(RemotePeer peer) async {
-    try {
-      await _settings!.setPeers(_settings!.peers.values.where((item) => item.id != peer.id));
-      if (mounted) _connect();
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Could not remove the device');
     }
   }
 
@@ -194,7 +162,8 @@ class _RemotePageState extends State<RemotePage> {
 
   @override
   void dispose() {
-    _client?.dispose();
+    _runtime?.removeListener(_runtimeChanged);
+    if (_runtime != null) _runtime!.openPages--;
     super.dispose();
   }
 
@@ -206,8 +175,6 @@ class _RemotePageState extends State<RemotePage> {
     final transfer = client?.transfer;
     final nearby = context.watch(nearbyDevicesProvider).devices;
     final busy = _choosing || transfer != null;
-    final localFingerprint = context.watch(securityProvider).certificateHash;
-    final alias = context.watch(settingsProvider.select((state) => state.alias));
 
     return Scaffold(
       appBar: AppBar(title: Text(remoteTransferLabel(context))),
@@ -219,6 +186,7 @@ class _RemotePageState extends State<RemotePage> {
               padding: const EdgeInsets.all(16),
               children: [
                 if (_error case final error?) Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                if (_runtime?.error case final error?) Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 if (settings == null || identity == null) ...[
                   if (_error == null) const LinearProgressIndicator(),
                 ] else ...[
@@ -232,16 +200,18 @@ class _RemotePageState extends State<RemotePage> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      OutlinedButton(onPressed: () => _copy(identity.card(alias, localFingerprint)), child: const Text('Copy device card')),
                       OutlinedButton(onPressed: () => _copy(identity.id), child: const Text('Copy relay allowlist key')),
-                      OutlinedButton(onPressed: busy ? null : _addPeer, child: const Text('Add trusted device')),
                       if (client != null && !client.connected) OutlinedButton(onPressed: busy ? null : _connect, child: const Text('Reconnect')),
                       if (client != null && client.connected)
-                        OutlinedButton(onPressed: busy ? null : client.disconnect, child: const Text('Disconnect')),
+                        OutlinedButton(onPressed: busy ? null : _runtime!.disconnect, child: const Text('Disconnect')),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text('Keep this screen open to receive files over the internet.'),
+                  Text(
+                    Localizations.localeOf(context).languageCode == 'zh'
+                        ? '服务器白名单内的设备自动可信。应用运行时保持连接，收到文件后由你确认。'
+                        : 'Server-whitelisted devices are trusted automatically. Stay connected while the app runs and confirm incoming files.',
+                  ),
                   const Divider(),
                   if (transfer != null) ...[
                     ListTile(
@@ -272,7 +242,7 @@ class _RemotePageState extends State<RemotePage> {
                       subtitle: Text(saved),
                       onTap: () => saved_file.openFile(context, saved.guessFileType(), saved),
                     ),
-                  for (final peer in settings.peers.values)
+                  for (final peer in (client?.peers ?? settings.peers).values)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.devices),
@@ -285,11 +255,6 @@ class _RemotePageState extends State<RemotePage> {
                             : 'Offline',
                       ),
                       onTap: busy ? null : () => _send(peer),
-                      trailing: IconButton(
-                        tooltip: 'Remove trusted device',
-                        onPressed: busy ? null : () => _removePeer(peer),
-                        icon: const Icon(Icons.close),
-                      ),
                     ),
                 ],
               ],

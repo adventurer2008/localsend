@@ -9,6 +9,7 @@ import 'package:localsend_app/pages/home_page.dart';
 import 'package:localsend_app/provider/local_ip_provider.dart';
 import 'package:localsend_app/provider/network/server/server_provider.dart';
 import 'package:localsend_app/provider/settings_provider.dart';
+import 'package:localsend_app/remote_transfer/remote_watcher.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_app/util/ui/dynamic_colors.dart';
 import 'package:localsend_app/widget/watcher/life_cycle_watcher.dart';
@@ -89,6 +90,7 @@ class LocalSendApp extends StatelessWidget {
               darkTheme: getTheme(colorMode, customColor, Brightness.dark, dynamicColors),
               themeMode: colorMode == ColorMode.oled ? ThemeMode.dark : themeMode,
               navigatorKey: context.read(navigationProvider).key,
+              builder: (context, child) => RemoteWatcher(child: child!),
               home: RouterinoHome(
                 builder: () => const HomePage(
                   initialTab: HomeTab.receive,

@@ -23,6 +23,16 @@ Future<void> until(bool Function() ready) async {
 }
 
 void main() {
+  test('Device directory cards are signed by the enrolled identity', () async {
+    final identity = await RemoteIdentity.fromSeed(Uint8List.fromList(List.filled(64, 7)));
+    final card = peerOf(identity, 'Alice').card;
+    final entry = {'id': identity.id, 'card': card, 'signature': await identity.signCard(card)};
+    expect((await RemoteIdentity.verifyCard(entry)).name, 'Alice');
+    final changed = card.replaceFirst(encodeRemoteBytes(utf8.encode('Alice')), encodeRemoteBytes(utf8.encode('Other')));
+    await expectLater(RemoteIdentity.verifyCard({...entry, 'card': changed}), throwsFormatException);
+    await expectLater(RemoteIdentity.verifyCard({...entry, 'id': 'another-id'}), throwsFormatException);
+  });
+
   test('Only the paired devices can decrypt a frame and its session, type and sequence cannot be changed', () async {
     final alice = await RemoteIdentity.fromSeed(Uint8List.fromList(List.filled(64, 1)));
     final bob = await RemoteIdentity.fromSeed(Uint8List.fromList(List.filled(64, 2)));
@@ -57,7 +67,7 @@ void main() {
   });
 
   test(
-    'Two Flutter clients require approval, reject strangers and stream files in both directions through the real relay',
+    'Whitelisted clients discover and trust each other automatically while transfers still require approval',
     () async {
       final temp = await Directory.systemTemp.createTemp('localsend-relay-test-');
       addTearDown(() => temp.delete(recursive: true));
@@ -82,8 +92,14 @@ void main() {
       final portLine = await relay.stdout.transform(utf8.decoder).transform(const LineSplitter()).first.timeout(const Duration(seconds: 8));
       final uri = Uri.parse('ws://127.0.0.1:$portLine/v1/relay'); // Loopback transport for this test only.
 
-      RemoteClient client(RemoteIdentity identity, Map<String, RemotePeer> peers, String name) {
-        final result = RemoteClient(identity: identity, uri: uri, peers: peers, documentsDirectory: () async => Directory(p.join(temp.path, name)));
+      RemoteClient client(RemoteIdentity identity, String name) {
+        final result = RemoteClient(
+          identity: identity,
+          uri: uri,
+          peers: {},
+          localCard: peerOf(identity, name).card,
+          documentsDirectory: () async => Directory(p.join(temp.path, name)),
+        );
         final running = result.run();
         addTearDown(() async {
           result.dispose();
@@ -92,10 +108,10 @@ void main() {
         return result;
       }
 
-      final sender = client(alice, {bob.id: bobCard}, 'Alice');
-      final receiver = client(bob, {alice.id: aliceCard}, 'Bob');
-      final stranger = client(other, {bob.id: bobCard}, 'Stranger');
-      final unpairedClient = client(unpaired, {bob.id: bobCard}, 'Unpaired');
+      final sender = client(alice, 'Alice');
+      final receiver = client(bob, 'Bob');
+      final stranger = client(other, 'Stranger');
+      final unpairedClient = client(unpaired, 'Third');
       await until(() => sender.online.containsKey(bob.id) && receiver.online.containsKey(alice.id));
       await until(() => stranger.status.startsWith('Relay refused'));
       expect(stranger.connected, isFalse);
@@ -103,11 +119,16 @@ void main() {
       final content = Uint8List.fromList(List.generate(700000, (index) => index % 256));
       final input = await File(p.join(temp.path, 'example.bin')).writeAsBytes(content);
       final outgoing = XFile(input.path);
-      await until(() => unpairedClient.online.containsKey(bob.id));
-      expect(receiver.online.containsKey(unpaired.id), isFalse);
+      await until(() => unpairedClient.online.containsKey(bob.id) && receiver.online.containsKey(unpaired.id));
+      expect(receiver.peers[unpaired.id]?.name, 'Third');
+      expect(sender.peers[bob.id]?.encryptionKey, bobCard.encryptionKey);
+      expect(receiver.peers[alice.id]?.encryptionKey, aliceCard.encryptionKey);
       await unpairedClient.offer(bobCard, outgoing);
+      await until(() => receiver.transfer?.phase == RemotePhase.offered);
+      expect(unpairedClient.transfer?.transferred, 0);
+      await receiver.decide(false);
       await until(() => unpairedClient.transfer == null);
-      expect(unpairedClient.status, contains('cancelled'));
+      expect(unpairedClient.status, contains('declined'));
       expect(receiver.transfer, isNull);
 
       await sender.offer(bobCard, outgoing);
@@ -144,6 +165,7 @@ void main() {
       await until(() => (receiver.transfer?.transferred ?? 0) > 0);
       await sender.disconnect();
       await until(() => receiver.transfer == null && !receiver.online.containsKey(alice.id));
+      expect(receiver.peers[alice.id]?.name, 'Alice'); // Offline devices remain in the trusted directory.
       expect(receiver.savedPath, previousSave);
       final receiverFiles = Directory(p.join(temp.path, 'Bob', 'LocalSend Remote'));
       expect(await receiverFiles.list().length, 1);

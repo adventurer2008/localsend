@@ -35,7 +35,9 @@ class RemoteSettings {
   }
 
   Future<void> setUrl(String value) async {
-    final saved = await _prefs.setString(_urlKey, relayUri(value).toString());
+    final normalized = relayUri(value).toString();
+    if (url != normalized) await setPeers(const []);
+    final saved = await _prefs.setString(_urlKey, normalized);
     if (!saved) throw StateError('Could not save relay URL');
   }
 

@@ -1,2 +1,4 @@
 node_modules/
 allowlist.json
+devices.json
+devices.json.tmp
