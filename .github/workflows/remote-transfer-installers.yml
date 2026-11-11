@@ -28,7 +28,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\makeappx.exe' pack /o /d support\build\msix\content /nv /p app\windows\localsend_msix_helper.msix
       - run: flutter build windows --release
-          --build-number=65
+          --build-number=66
         working-directory: app
       - name: Build per-user installer
         run: |
@@ -78,7 +78,7 @@ jobs:
           sed -i 's/android:label="LocalSend"/android:label="LocalSend Remote"/' app/android/app/src/main/AndroidManifest.xml
       - name: Build universal Android APK
         working-directory: app
-        run: flutter build apk --release --build-number=65
+        run: flutter build apk --release --build-number=66
       - run: cp app/build/app/outputs/flutter-apk/app-release.apk LocalSend-Remote-Android.apk
       - uses: actions/upload-artifact@v6
         with:
