@@ -1,0 +1,66 @@
+name: Remote transfer mobile smoke tests
+on:
+  push:
+    branches: [test/remote-mobile-smoke]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.9"
+          channel: stable
+      - name: Build iOS simulator app
+        working-directory: app
+        run: |
+          rustup toolchain install --profile minimal
+          rustup target add aarch64-apple-ios-sim
+          flutter build ios --simulator --debug --no-codesign
+      - name: Launch and verify native HTTPS receive server
+        run: |
+          simulator="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(item["udid"] for runtime in reversed(list(d)) for item in d[runtime] if item["name"].startswith("iPhone")))' )"
+          xcrun simctl boot "$simulator"
+          xcrun simctl bootstatus "$simulator" -b
+          app="$GITHUB_WORKSPACE/app/build/ios/iphonesimulator/Runner.app"
+          xcrun simctl install "$simulator" "$app"
+          bundle="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")"
+          xcrun simctl launch "$simulator" "$bundle"
+          bash "$GITHUB_WORKSPACE/support/scripts/check-native-receive-smoke.sh"
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - name: Start Android emulator
+        run: |
+          sudo chmod a+rw /dev/kvm
+          image='system-images;android-35;google_apis;x86_64'
+          sdkmanager --install "$image"
+          printf 'no\n' | avdmanager create avd --force --name remote-smoke --package "$image"
+          nohup "$ANDROID_HOME/emulator/emulator" -avd remote-smoke -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          timeout 240 adb wait-for-device
+          timeout 240 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 3; done'
+      - name: Install the signed routing-fix APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
+          artifact=''
+          for attempt in {1..55}; do
+            artifact="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$base/runs/42960689934/artifacts" | jq -r '.artifacts[] | select(.name == "LocalSend-Remote-Android") | .id')"
+            if [[ -n "$artifact" ]]; then break; fi
+            sleep 20
+          done
+          test -n "$artifact"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$base/artifacts/$artifact/zip" -o "$RUNNER_TEMP/remote.apk.zip"
+          unzip -q "$RUNNER_TEMP/remote.apk.zip" -d "$RUNNER_TEMP/remote-smoke"
+          adb install "$RUNNER_TEMP/remote-smoke/LocalSend-Remote-Android.apk"
+          adb shell am start -W -n org.localsend.localsend_app.remote/org.localsend.localsend_app.MainActivity
+          adb forward tcp:53317 tcp:53317
+          bash "$GITHUB_WORKSPACE/support/scripts/check-native-receive-smoke.sh"
+
