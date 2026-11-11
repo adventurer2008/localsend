@@ -39,19 +39,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
-      - name: Start Android emulator
-        run: |
-          sudo chmod a+rw /dev/kvm
-          image='system-images;android-35;google_apis;x86_64'
-          sdkmanager="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -print -quit)"
-          test -x "$sdkmanager"
-          export PATH="$(dirname "$sdkmanager"):$ANDROID_HOME/platform-tools:$PATH"
-          sdkmanager --install emulator platform-tools "$image"
-          printf 'no\n' | avdmanager create avd --force --name remote-smoke --package "$image"
-          nohup "$ANDROID_HOME/emulator/emulator" -avd remote-smoke -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          timeout 240 adb wait-for-device
-          timeout 240 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 3; done'
-      - name: Install the signed routing-fix APK
+      - name: Download the signed routing-fix APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -65,8 +53,19 @@ jobs:
           test -n "$artifact"
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$base/artifacts/$artifact/zip" -o "$RUNNER_TEMP/remote.apk.zip"
           unzip -q "$RUNNER_TEMP/remote.apk.zip" -d "$RUNNER_TEMP/remote-smoke"
-          adb install "$RUNNER_TEMP/remote-smoke/LocalSend-Remote-Android.apk"
-          adb shell am start -W -n org.localsend.localsend_app.remote/org.localsend.localsend_app.MainActivity
-          adb forward tcp:53317 tcp:53317
-          bash "$GITHUB_WORKSPACE/support/scripts/check-native-receive-smoke.sh"
-
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Launch APK and verify native HTTPS receive server
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: |
+            adb install "$RUNNER_TEMP/remote-smoke/LocalSend-Remote-Android.apk"
+            adb shell am start -W -n org.localsend.localsend_app.remote/org.localsend.localsend_app.MainActivity
+            adb forward tcp:53317 tcp:53317
+            bash "$GITHUB_WORKSPACE/support/scripts/check-native-receive-smoke.sh"
