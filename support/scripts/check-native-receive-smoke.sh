@@ -12,6 +12,9 @@ for attempt in {1..35}; do
     -H 'Content-Type: application/json' --data "$data" \
     'https://127.0.0.1:53317/api/localsend/v2/register' > "$work/response.json" 2>/dev/null; then
     python3 -c 'import json,re,sys; d=json.load(sys.stdin); assert d["alias"]; assert re.fullmatch("[0-9a-fA-F]{64}", d["fingerprint"]); print("LocalSend native HTTPS registration succeeded")' < "$work/response.json"
+    if [[ $# -eq 1 ]]; then
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])' < "$work/response.json" > "$1"
+    fi
     exit 0
   fi
   sleep 2

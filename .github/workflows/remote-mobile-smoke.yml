@@ -39,20 +39,24 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
-      - name: Download the signed routing-fix APK
+      - name: Download builds 66 and 67
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
-          artifact=''
-          for attempt in {1..55}; do
-            artifact="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$base/runs/42960689934/artifacts" | jq -r '.artifacts[] | select(.name == "LocalSend-Remote-Android") | .id')"
-            if [[ -n "$artifact" ]]; then break; fi
-            sleep 20
-          done
-          test -n "$artifact"
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$base/artifacts/$artifact/zip" -o "$RUNNER_TEMP/remote.apk.zip"
-          unzip -q "$RUNNER_TEMP/remote.apk.zip" -d "$RUNNER_TEMP/remote-smoke"
+          download_apk() {
+            local run="$1" build="$2" artifact=''
+            for attempt in {1..65}; do
+              artifact="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$base/runs/$run/artifacts" | jq -r '.artifacts[] | select(.name == "LocalSend-Remote-Android") | .id')"
+              if [[ -n "$artifact" ]]; then break; fi
+              sleep 20
+            done
+            test -n "$artifact"
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$base/artifacts/$artifact/zip" -o "$RUNNER_TEMP/remote-$build.zip"
+            unzip -q "$RUNNER_TEMP/remote-$build.zip" -d "$RUNNER_TEMP/remote-$build"
+          }
+          download_apk 42960689934 66
+          download_apk 42964807635 67
       - name: Enable KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -64,8 +68,5 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
-          script: |
-            adb install "$RUNNER_TEMP/remote-smoke/LocalSend-Remote-Android.apk"
-            adb shell am start -W -n org.localsend.localsend_app.remote/org.localsend.localsend_app.MainActivity
-            adb forward tcp:53317 tcp:53317
-            bash "$GITHUB_WORKSPACE/support/scripts/check-native-receive-smoke.sh"
+          script: bash "$GITHUB_WORKSPACE/support/scripts/check-android-upgrade-smoke.sh"
+
