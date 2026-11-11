@@ -26,6 +26,7 @@ import 'package:localsend_app/provider/settings_provider.dart';
 import 'package:localsend_app/provider/tv_provider.dart';
 import 'package:localsend_app/provider/version_provider.dart';
 import 'package:localsend_app/provider/window_dimensions_provider.dart';
+import 'package:localsend_app/remote_transfer/remote_runtime.dart';
 import 'package:localsend_app/util/i18n.dart';
 import 'package:localsend_app/util/native/autostart_helper.dart';
 import 'package:localsend_app/util/native/cache_helper.dart';
@@ -211,6 +212,8 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
       context.showSnackBar(e.toString());
     }
   }
+
+  unawaited(ref.read(remoteRuntimeProvider).initialize());
 
   try {
     ref.redux(nearbyDevicesProvider).dispatchAsync(StartDiscoveryListener()); // ignore: unawaited_futures

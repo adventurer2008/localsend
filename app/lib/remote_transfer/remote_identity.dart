@@ -101,6 +101,27 @@ class RemoteIdentity {
     return encodeRemoteBytes(signature.bytes);
   }
 
+  Future<String> signCard(String card) async {
+    if (RemotePeer.parse(card).id != id) throw const FormatException('Device card identity mismatch');
+    final signature = await _signing.sign(utf8.encode('localsend-relay/card/v1:$card'), keyPair: _signingKey);
+    return encodeRemoteBytes(signature.bytes);
+  }
+
+  static Future<RemotePeer> verifyCard(Map<String, dynamic> entry) async {
+    final card = entry['card'] as String;
+    final peer = RemotePeer.parse(card);
+    if (entry['id'] != peer.id) throw const FormatException('Device directory identity mismatch');
+    final valid = await _signing.verify(
+      utf8.encode('localsend-relay/card/v1:$card'),
+      signature: Signature(
+        decodeRemoteBytes(entry['signature'] as String, 64),
+        publicKey: SimplePublicKey(decodeRemoteBytes(peer.id, 32), type: KeyPairType.ed25519),
+      ),
+    );
+    if (!valid) throw const FormatException('Device directory signature mismatch');
+    return peer;
+  }
+
   Future<SecretKey> transferKey(RemotePeer peer, String sender, String receiver, String session, String receiverEpoch) async {
     final shared = await _exchange.sharedSecretKey(
       keyPair: _exchangeKey,

@@ -1,5 +1,6 @@
 import { createPublicKey, randomBytes, verify } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -17,7 +18,7 @@ function decode(value, length) {
   return bytes.length === length && bytes.toString('base64url') === value ? bytes : null;
 }
 
-export function createRelay(allowedIds) {
+export function createRelay(allowedIds, { directoryPath } = {}) {
   if (!Array.isArray(allowedIds) || allowedIds.length === 0 || allowedIds.length > 32) {
     throw new Error('The allowlist must contain 1 to 32 Ed25519 public keys');
   }
@@ -27,6 +28,49 @@ export function createRelay(allowedIds) {
     return [id, createPublicKey({ key: Buffer.concat([ed25519DerPrefix, bytes]), format: 'der', type: 'spki' })];
   }));
   if (keys.size !== allowedIds.length) throw new Error('Duplicate key in allowlist');
+
+  function verifiedCard(id, card, signature) {
+    if (typeof card !== 'string' || card.length > 1024 || typeof id !== 'string') return null;
+    const fields = card.split('.');
+    const proof = decode(signature, 64);
+    if (fields.length !== 5 || fields[0] !== 'lsr1' || fields[2] !== id || !keys.has(id) || !proof ||
+        !decode(fields[3], 32) || !/^[A-Fa-f0-9]{64}$/.test(fields[4])) return null;
+    try {
+      const name = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(fields[1], 'base64url'));
+      if (!name.trim() || name.length > 64 || /[\x00-\x1f\x7f]/.test(name) ||
+          Buffer.from(name).toString('base64url') !== fields[1]) return null;
+    } catch { return null; }
+    if (!verify(null, Buffer.from(`localsend-relay/card/v1:${card}`), keys.get(id), proof)) return null;
+    return { id, card, signature };
+  }
+
+  const directory = new Map();
+  if (directoryPath) {
+    try {
+      const saved = JSON.parse(readFileSync(directoryPath, 'utf8').trim());
+      if (Array.isArray(saved)) {
+        for (const entry of saved) {
+          const valid = verifiedCard(entry?.id, entry?.card, entry?.signature);
+          if (valid) directory.set(valid.id, valid);
+        }
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn('Device directory cache could not be read; devices will republish when they connect');
+    }
+  }
+
+  function saveCard(entry) {
+    directory.set(entry.id, entry);
+    if (directoryPath) {
+      try {
+        const temporary = directoryPath + '.tmp';
+        writeFileSync(temporary, JSON.stringify(Array.from(directory.values())));
+        renameSync(temporary, directoryPath);
+      } catch {
+        console.warn('Device directory cache could not be saved');
+      }
+    }
+  }
 
   const server = createServer((req, res) => {
     res.writeHead(req.method === 'GET' && req.url === '/health' ? 200 : 404).end();
@@ -53,7 +97,8 @@ export function createRelay(allowedIds) {
 
   function announce() {
     const online = Array.from(peers.values(), ({ id, epoch }) => ({ id, epoch }));
-    for (const client of peers.values()) send(client, { type: 'peers', online });
+    const devices = Array.from(directory.values());
+    for (const client of peers.values()) send(client, { type: 'peers', online, directory: devices });
   }
 
   function release(transfer) {
@@ -143,12 +188,17 @@ export function createRelay(allowedIds) {
           control(client, frame);
           return;
         }
-        const { type, id, epoch, signature } = frame;
+        const { type, id, epoch, signature, card, cardSignature } = frame;
         const key = typeof id === 'string' && publicId.test(id) ? keys.get(id) : null;
         const proof = decode(signature, 64);
         if (type !== 'auth' || !key || !decode(epoch, 16) || !proof ||
             !verify(null, Buffer.from(`${authPrefix}:${nonce}:${epoch}`), key, proof)) {
           throw new Error('Authentication rejected');
+        }
+        if (card !== undefined || cardSignature !== undefined) {
+          const entry = verifiedCard(id, card, cardSignature);
+          if (!entry) throw new Error('Device card rejected');
+          saveCard(entry);
         }
         clearTimeout(loginTimeout);
         const previous = peers.get(id);
@@ -160,7 +210,7 @@ export function createRelay(allowedIds) {
         client.id = id;
         client.epoch = epoch;
         peers.set(id, client);
-        send(client, { type: 'ready' });
+        send(client, { type: 'ready', directoryVersion: 1 });
         announce();
       } catch {
         ws.close(1008, 'Authentication or protocol rejected');
@@ -189,6 +239,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const allowlist = JSON.parse(readFileSync(process.env.RELAY_ALLOWLIST || 'allowlist.json', 'utf8').trim());
   const host = process.env.RELAY_HOST || '127.0.0.1';
   const port = Number(process.env.RELAY_PORT || 8787);
-  const { server } = createRelay(allowlist);
+  const directoryPath = process.env.RELAY_DIRECTORY || join(dirname(process.env.RELAY_ALLOWLIST || 'allowlist.json'), 'devices.json');
+  const { server } = createRelay(allowlist, { directoryPath });
   server.listen(port, host, () => console.log(`LocalSend relay listening on ${host}:${port}`));
 }

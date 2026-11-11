@@ -43,6 +43,8 @@ class RemoteClient extends ChangeNotifier {
   final RemoteIdentity identity;
   final Uri uri;
   final Map<String, RemotePeer> peers;
+  final String? localCard;
+  final Future<void> Function(Iterable<RemotePeer>)? onDirectory;
   final Future<Directory> Function() documentsDirectory;
   final _epoch = encodeRemoteBytes(remoteRandomBytes(16));
   final _seenOffers = <String>{};
@@ -50,12 +52,20 @@ class RemoteClient extends ChangeNotifier {
   Future<void> _tail = Future.value();
   bool _disposed = false;
   bool connected = false;
+  bool automaticTrust = false;
   String status = 'Connecting…';
   String? savedPath;
   Map<String, String> online = {};
   RemoteTransfer? transfer;
 
-  RemoteClient({required this.identity, required this.uri, required this.peers, this.documentsDirectory = getApplicationDocumentsDirectory});
+  RemoteClient({
+    required this.identity,
+    required this.uri,
+    required Map<String, RemotePeer> peers,
+    this.localCard,
+    this.onDirectory,
+    this.documentsDirectory = getApplicationDocumentsDirectory,
+  }) : peers = Map.of(peers);
 
   void _changed() {
     if (!_disposed) notifyListeners();
@@ -168,11 +178,38 @@ class RemoteClient extends ChangeNotifier {
     switch (frame['type']) {
       case 'challenge' when !connected:
         final signature = await identity.signChallenge(frame['nonce'] as String, _epoch);
-        _write({'type': 'auth', 'id': identity.id, 'epoch': _epoch, 'signature': signature});
+        final payload = <String, Object>{
+          'type': 'auth',
+          'id': identity.id,
+          'epoch': _epoch,
+          'signature': signature,
+        };
+        final card = localCard;
+        if (card != null) {
+          payload['card'] = card;
+          payload['cardSignature'] = await identity.signCard(card);
+        }
+        _write(payload);
       case 'ready' when !connected:
+        automaticTrust = frame['directoryVersion'] == 1;
         connected = true;
         status = 'Connected to relay';
       case 'peers' when connected:
+        if (automaticTrust) {
+          final entries = frame['directory'] as List;
+          if (entries.length > 32) throw const FormatException('Device directory too large');
+          final trusted = <String, RemotePeer>{};
+          for (final entry in entries) {
+            final peer = await RemoteIdentity.verifyCard(entry as Map<String, dynamic>);
+            if (peer.id != identity.id) trusted[peer.id] = peer;
+          }
+          peers
+            ..clear()
+            ..addAll(trusted);
+          await onDirectory?.call(peers.values);
+          final current = transfer;
+          if (current != null && !peers.containsKey(current.peer.id)) await _abort(current, 'Device is no longer trusted');
+        }
         online = {
           for (final entry in (frame['online'] as List).cast<Map<String, dynamic>>())
             if (peers.containsKey(entry['id'])) entry['id'] as String: entry['epoch'] as String,
