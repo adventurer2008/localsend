@@ -1,0 +1,74 @@
+name: Remote transfer installers
+
+on:
+  push:
+    branches: [build/remote-transfer-v1]
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - run: git config --system core.longpaths true
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - name: Prepare Windows build
+        run: |
+          rustup toolchain install --profile minimal
+          $makepri = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\makepri.exe' | Select-Object -Last 1
+          & $makepri.FullName new /pr support\build\msix\content /cf support\build\msix\priconfig.xml /mn support\build\msix\content\AppxManifest.xml /of support\build\msix\content\resources.pri /o
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\makeappx.exe' pack /o /d support\build\msix\content /nv /p app\windows\localsend_msix_helper.msix
+      - run: flutter build windows --release
+        working-directory: app
+      - name: Build per-user installer
+        run: |
+          $payload = (Resolve-Path app/build/windows/x64/runner/Release).Path
+          Copy-Item support/build/windows/x64/*.dll $payload
+          '{}' | Set-Content "$payload/settings.json" -Encoding ascii
+          Remove-Item "$payload/localsend_msix_helper.msix", "$payload/install_msix_helper.ps1", "$payload/localsend_app.exe.manifest" -ErrorAction SilentlyContinue
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) { choco install innosetup --yes --no-progress }
+          & $iscc "/DPayloadDir=$payload" "/O$env:GITHUB_WORKSPACE\installers" support/scripts/remote-transfer-installer.iss
+      - uses: actions/upload-artifact@v6
+        with:
+          name: LocalSend-Remote-Windows-x64
+          path: installers/LocalSend-Remote-Windows-x64.exe
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - name: Prepare test signing and app ID
+        run: |
+          rustup toolchain install --profile minimal
+          sh support/scripts/remove_proprietary_dependencies.sh
+          sed -i '/^    buildTypes {/,/^    }/s/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' app/android/app/build.gradle
+          sed -i 's/applicationId "org.localsend.localsend_app"/applicationId "org.localsend.localsend_app.remote"/' app/android/app/build.gradle
+          sed -i 's/android:label="LocalSend"/android:label="LocalSend Remote"/' app/android/app/src/main/AndroidManifest.xml
+      - name: Build universal Android APK
+        working-directory: app
+        run: flutter build apk --release
+      - run: cp app/build/app/outputs/flutter-apk/app-release.apk LocalSend-Remote-Android.apk
+      - uses: actions/upload-artifact@v6
+        with:
+          name: LocalSend-Remote-Android
+          path: LocalSend-Remote-Android.apk
+          if-no-files-found: error
