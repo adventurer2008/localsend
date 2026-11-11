@@ -11,6 +11,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.Settings
@@ -38,30 +39,34 @@ class MainActivity : FlutterActivity() {
     private var pendingResult: MethodChannel.Result? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
 
-    /// share_handler drops share intents arriving via onNewIntent while the Dart side
-    /// is not subscribed to its media stream yet, which happens when this singleTask
-    /// activity is relaunched into an existing task while the app is still starting.
-    /// Hold such intents back until Dart reports readiness ("shareIntentReady"), then
-    /// replay them through the regular plugin path.
     private val pendingShareIntents = mutableListOf<Intent>()
-    private var shareIntentReady = false
+    private var appChannel: MethodChannel? = null
 
-    override fun onNewIntent(intent: Intent) {
-        if (!shareIntentReady && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE)) {
-            pendingShareIntents.add(intent)
-            return
+    override fun onCreate(savedInstanceState: Bundle?) {
+        val incoming = intent
+        if (isShare(incoming)) {
+            if (incoming.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) {
+                pendingShareIntents.add(incoming)
+            }
+            // The Android share_handler plugin also reads the initial intent. Give
+            // it a neutral intent so it does not copy files using its path resolver.
+            setIntent(Intent(Intent.ACTION_MAIN))
         }
-        super.onNewIntent(intent)
+        super.onCreate(savedInstanceState)
     }
 
-    private fun onShareIntentReady() {
-        shareIntentReady = true
-        val pending = pendingShareIntents.toList()
-        pendingShareIntents.clear()
-        for (intent in pending) {
+    override fun onNewIntent(intent: Intent) {
+        if (isShare(intent)) {
+            super.onNewIntent(Intent(Intent.ACTION_MAIN))
+            pendingShareIntents.add(intent)
+            appChannel?.invokeMethod("incomingShareAvailable", null)
+        } else {
             super.onNewIntent(intent)
         }
     }
+
+    private fun isShare(intent: Intent): Boolean =
+        intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE
 
     // Overriding the static methods we need from the Java class, as described
     // in the documentation of `FlutterActivity.NewEngineIntentBuilder`
@@ -77,10 +82,12 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(
+        val channel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL
-        ).setMethodCallHandler { call, result ->
+        )
+        appChannel = channel
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickDirectory" -> {
                     pendingResult = result
@@ -115,9 +122,17 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
-                "shareIntentReady" -> {
-                    onShareIntentReady()
-                    result.success(null)
+                "takeIncomingShares" -> {
+                    val pending = pendingShareIntents.toList()
+                    pendingShareIntents.clear()
+                    if (pending.isEmpty()) {
+                        result.success(emptyList<Any>())
+                    } else {
+                        Thread {
+                            val shares = pending.map { importIncomingShare(applicationContext, it) }
+                            runOnUiThread { result.success(shares) }
+                        }.start()
+                    }
                 }
 
                 "isAnimationsEnabled" -> {

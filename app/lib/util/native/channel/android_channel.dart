@@ -75,15 +75,13 @@ Future<void> openContentUri({
   });
 }
 
-/// Tells MainActivity that the Dart side is now subscribed to the share_handler media stream,
-/// so share intents that were held back during app start can be replayed.
-Future<void> flushPendingShareIntentsAndroid() async {
-  try {
-    await _methodChannel.invokeMethod('shareIntentReady');
-  } catch (e) {
-    _logger.warning('Could not flush pending share intents', e);
-  }
+void listenForIncomingSharesAndroid(void Function() onAvailable) {
+  _methodChannel.setMethodCallHandler((call) async {
+    if (call.method == 'incomingShareAvailable') onAvailable();
+  });
 }
+
+Future<List<Object?>> takeIncomingSharesAndroid() async => await _methodChannel.invokeListMethod<Object?>('takeIncomingShares') ?? const [];
 
 Future<void> openGallery() async {
   _logger.info('Opening gallery');
