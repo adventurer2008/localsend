@@ -116,7 +116,11 @@ void main() {
       await until(() => stranger.status.startsWith('Relay refused'));
       expect(stranger.connected, isFalse);
 
-      final content = Uint8List.fromList(List.generate(700000, (index) => index % 256));
+      // Exercise the initial window, its refill after ACKs, and a short final chunk.
+      final content = Uint8List(9 * 256 * 1024 + 19);
+      for (var index = 0; index < content.length; index++) {
+        content[index] = index % 251;
+      }
       final input = await File(p.join(temp.path, 'example.bin')).writeAsBytes(content);
       final outgoing = XFile(input.path);
       await until(() => unpairedClient.online.containsKey(bob.id) && receiver.online.containsKey(unpaired.id));
