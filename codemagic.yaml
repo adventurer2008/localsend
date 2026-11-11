@@ -38,13 +38,15 @@ workflows:
           set -euo pipefail
           staging=$(mktemp -d)
           trap 'rm -rf "$staging"' EXIT
-          mkdir -p "$staging/Payload" build/ios/ipa
+          ipa="$CM_BUILD_DIR/LocalSend-Relay-Unsigned.ipa"
+          mkdir -p "$staging/Payload"
           ditto build/ios/iphoneos/Runner.app "$staging/Payload/Runner.app"
           rm -rf "$staging/Payload/Runner.app/PlugIns/ShareExtension.appex"
-          ditto -c -k --norsrc --keepParent "$staging/Payload" build/ios/ipa/LocalSend-Relay-Unsigned.ipa
-          unzip -tq build/ios/ipa/LocalSend-Relay-Unsigned.ipa
+          ditto -c -k --norsrc --keepParent "$staging/Payload" "$ipa"
+          unzip -tq "$ipa"
+          ls -lh "$ipa"
     artifacts:
-      - app/build/ios/ipa/LocalSend-Relay-Unsigned.ipa
+      - $CM_BUILD_DIR/LocalSend-Relay-Unsigned.ipa
 
   ios-relay-adhoc:
     <<: *ios_instance
