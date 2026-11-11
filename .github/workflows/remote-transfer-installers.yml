@@ -103,18 +103,16 @@ jobs:
         run: |
           args=(--release "--build-number=$BUILD_NUMBER")
           if [[ "$RELEASE_BUILD" != true ]]; then
-            args+=(--target-platform android-arm64 --split-per-abi)
+            args+=(--target-platform android-arm64)
           fi
           flutter build apk "${args[@]}"
       - name: Verify and stage APK
         id: apk
         run: |
-          apk_dir=app/build/app/outputs/flutter-apk
-          apk="$apk_dir/app-arm64-v8a-release.apk"
+          apk=app/build/app/outputs/flutter-apk/app-release.apk
           name=LocalSend-Remote-Android-Vivo-ARM64
           expected_abis=(arm64-v8a)
           if [[ "$RELEASE_BUILD" == true ]]; then
-            apk="$apk_dir/app-release.apk"
             name=LocalSend-Remote-Android
             expected_abis+=(armeabi-v7a x86_64)
           fi
@@ -132,6 +130,10 @@ jobs:
               sys.exit(f"Expected {expected_abis}, found APK ABIs {sorted(apk_abis)} and Rust ABIs {sorted(rust_abis)}")
           print(f"Verified APK and Rust ABIs: {sorted(apk_abis)}")
           PY
+          build_tools="$ANDROID_HOME/build-tools/$(ls -1v "$ANDROID_HOME/build-tools" | tail -n 1)"
+          package_info=$("$build_tools/aapt2" dump badging "$apk")
+          grep -Fq "package: name='org.localsend.localsend_app.remote' versionCode='$BUILD_NUMBER'" <<< "$package_info"
+          "$build_tools/apksigner" verify "$apk"
           cp "$apk" "$name.apk"
           echo "name=$name" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v6

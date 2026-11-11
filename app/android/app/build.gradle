@@ -69,6 +69,11 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
+            // Flutter still adds all default ABI filters when building a single unsplit APK.
+            if (project.findProperty('target-platform') == 'android-arm64') {
+                ndk.abiFilters.clear()
+                ndk.abiFilters.add('arm64-v8a')
+            }
         }
         debug {
             applicationIdSuffix ".debug"
