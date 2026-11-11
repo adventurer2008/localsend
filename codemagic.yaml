@@ -1,0 +1,56 @@
+definitions:
+  instance: &ios_instance
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: app
+  tools: &ios_tools
+    flutter: 3.41.9
+    xcode: '26.5'
+    cocoapods: default
+  dependencies: &ios_dependencies
+    name: Prepare Flutter and Rust dependencies
+    script: |
+      set -euo pipefail
+      if ! command -v rustup >/dev/null; then
+        curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal
+        . "$HOME/.cargo/env"
+      fi
+      rustup toolchain install stable --profile minimal --target aarch64-apple-ios
+      flutter pub get
+
+workflows:
+  ios-relay-compile:
+    <<: *ios_instance
+    name: iOS relay - unsigned compile check
+    environment: *ios_tools
+    scripts:
+      - *ios_dependencies
+      - name: Compile for iPhone without signing
+        script: flutter build ios --release --no-codesign
+
+  ios-relay-adhoc:
+    <<: *ios_instance
+    name: iOS relay - Ad Hoc IPA
+    environment:
+      <<: *ios_tools
+      groups:
+        - ios_relay
+      ios_signing:
+        certificates:
+          - relay_distribution
+        provisioning_profiles:
+          - relay_runner_adhoc
+          - relay_share_adhoc
+    scripts:
+      - name: Configure the relay test targets
+        script: python3 ../support/scripts/configure_ios_relay_build.py
+      - *ios_dependencies
+      - name: Apply the Ad Hoc profiles
+        script: |
+          xcode-project use-profiles --project ios/Runner.xcodeproj \
+            --archive-method ad-hoc --export-options-plist "$CM_BUILD_DIR/ios-relay-export.plist"
+      - name: Build the signed IPA
+        script: flutter build ipa --release --export-options-plist "$CM_BUILD_DIR/ios-relay-export.plist"
+    artifacts:
+      - app/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log

@@ -53,6 +53,10 @@ relay.example.com {
 
 ## 没有 Mac 时安装到 iPhone
 
-可以用 Codemagic 的 macOS 构建机先验证 Flutter iOS 无签名构建。准备真机安装包时，在自己的 Apple Developer 团队下登记 iPhone 的 UDID，为主应用和 Share Extension 分配各自的 Bundle ID 及 Ad Hoc 描述文件。将两个 target 的 App Group 和代码中的 App Group 标识统一改为团队下登记的标识，再用 Codemagic 生成签名的 IPA。已登记的 iPhone 可以通过构建结果的安装二维码安装。签名凭据只配置在构建服务中。 [Codemagic 分发方式](https://docs.codemagic.io/knowledge-white-label/white-label-apps-overview/)
+在 Codemagic 添加本仓库，使用根目录的 `codemagic.yaml`。`ios-relay-compile` 可先验证 iOS 编译。安装到 iPhone 时使用 `ios-relay-adhoc`，它会在构建时切换到你的签名标识，并从主应用的签名权限里移除组播和 APNs 权限。
+
+1. 在 Apple Developer 登记测试 iPhone 的 UDID。注册主应用 Bundle ID 和以它开头的扩展 Bundle ID，例如 `com.example.localsend.relay` 和 `com.example.localsend.relay.ShareExtension`。注册 `group.<主应用 Bundle ID>`，并给两个 App ID 启用同一个 App Group。
+2. 为两个 App ID 分别生成包含该 iPhone 的 Ad Hoc 描述文件。在 Codemagic 的 **Team settings → Code signing identities** 上传配套的 Apple Distribution 证书和两个描述文件。证书的引用名填 `relay_distribution`，主应用描述文件填 `relay_runner_adhoc`，扩展描述文件填 `relay_share_adhoc`。
+3. 在 Codemagic 的环境变量组 `ios_relay` 中设置 `IOS_RELAY_BUNDLE_ID`，值为主应用 Bundle ID。手动运行 `ios-relay-adhoc`，从构建结果的 Artifacts 扫码安装 IPA。签名凭据保存在 Codemagic。 [Codemagic 签名](https://docs.codemagic.io/yaml-code-signing/signing-ios/) · [Codemagic 分发方式](https://docs.codemagic.io/knowledge-white-label/white-label-apps-overview/)
 
 原项目的 iOS 局域网组播依赖 Apple 审批的 `com.apple.developer.networking.multicast` 权限。要保留 iPhone 真机的组播自动发现，需给自己的 App ID 申请此权限。公网中继走 WSS，不使用组播。 [Codemagic 签名](https://docs.codemagic.io/flutter-code-signing/ios-code-signing/) · [Apple 组播权限](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.multicast)
