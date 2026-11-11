@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 const authPrefix = 'localsend-relay/auth/v1';
 const maxPayload = 360_000; // A 256 KiB encrypted chunk plus base64 and JSON.
+const chunkWindow = 8;
 const transferId = /^[a-f0-9]{32}$/;
 const publicId = /^[A-Za-z0-9_-]{43}$/;
 const encodedBody = /^[A-Za-z0-9_-]+$/;
@@ -88,7 +89,7 @@ export function createRelay(allowedIds, { directoryPath } = {}) {
 
   function send(client, frame) {
     if (client.ws.readyState !== WebSocket.OPEN) return;
-    if (client.ws.bufferedAmount > maxPayload * 2) {
+    if (client.ws.bufferedAmount > maxPayload * (chunkWindow + 2)) {
       client.ws.terminate();
       return;
     }
@@ -138,7 +139,7 @@ export function createRelay(allowedIds, { directoryPath } = {}) {
         return;
       }
       if (seq !== 0 || body.length > 8192) throw new Error('Invalid offer');
-      transfer = { id: session, sender: client, receiver, phase: 'decision', senderSeq: 1, receiverSeq: 0 };
+      transfer = { id: session, sender: client, receiver, phase: 'decision', senderSeq: 1, receiverSeq: 0, pendingChunks: 0 };
       active.set(client.id, transfer);
       active.set(receiver.id, transfer);
       send(receiver, { type, session, from: client.id, seq, body });
@@ -152,13 +153,16 @@ export function createRelay(allowedIds, { directoryPath } = {}) {
     if (seq !== transfer[counter] || (type !== 'chunk' && body.length > 8192)) throw new Error('Unexpected frame');
     const transition = {
       decision: sending ? {} : { accept: 'data', decline: 'closed' },
-      data: sending ? { chunk: 'ack', finish: 'receipt' } : {},
-      ack: sending ? {} : { ack: 'data' },
+      data: sending
+        ? { chunk: transfer.pendingChunks < chunkWindow ? 'data' : null, finish: transfer.pendingChunks === 0 ? 'receipt' : null }
+        : { ack: transfer.pendingChunks > 0 ? 'data' : null },
       receipt: sending ? {} : { receipt: 'closed' },
     }[transfer.phase];
-    if (!Object.hasOwn(transition, type)) throw new Error('Unexpected transfer state');
+    if (!Object.hasOwn(transition, type) || !transition[type]) throw new Error('Unexpected transfer state');
 
     transfer[counter]++;
+    if (type === 'chunk') transfer.pendingChunks++;
+    if (type === 'ack') transfer.pendingChunks--;
     transfer.phase = transition[type];
     const peer = sending ? transfer.receiver : transfer.sender;
     send(peer, { type, session, from: client.id, seq, body });
@@ -210,7 +214,7 @@ export function createRelay(allowedIds, { directoryPath } = {}) {
         client.id = id;
         client.epoch = epoch;
         peers.set(id, client);
-        send(client, { type: 'ready', directoryVersion: 1 });
+        send(client, { type: 'ready', directoryVersion: 1, chunkWindow });
         announce();
       } catch {
         ws.close(1008, 'Authentication or protocol rejected');

@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 const _chunkSize = 256 * 1024;
+const _maxChunkWindow = 8;
 const _maxFileSize = 1 << 40;
 final _sessionId = RegExp(r'^[a-f0-9]{32}$');
 
@@ -24,6 +25,8 @@ class RemoteTransfer {
   final XFile? source;
   RemotePhase phase;
   int transferred = 0;
+  int _sentBytes = 0;
+  int _pendingChunks = 0;
   Directory? staging;
   RandomAccessFile? writer;
 
@@ -51,6 +54,7 @@ class RemoteClient extends ChangeNotifier {
   WebSocket? _socket;
   Future<void> _tail = Future.value();
   bool _disposed = false;
+  int _chunkWindow = 1;
   bool connected = false;
   bool automaticTrust = false;
   String status = 'Connecting…';
@@ -197,6 +201,9 @@ class RemoteClient extends ChangeNotifier {
         _write(payload);
       case 'ready' when !connected:
         automaticTrust = frame['directoryVersion'] == 1;
+        final window = frame['chunkWindow'];
+        // Older relays require an ACK before they will forward the next chunk.
+        _chunkWindow = window is int && window >= 1 && window <= _maxChunkWindow ? window : 1;
         connected = true;
         status = 'Connected to relay';
       case 'peers' when connected:
@@ -265,8 +272,14 @@ class RemoteClient extends ChangeNotifier {
     if (type != 'chunk' && bytes.isNotEmpty) throw const FormatException('Unexpected control data');
     switch ((current.phase, type)) {
       case (RemotePhase.waiting, 'accept'):
+        await _fillWindow(current);
       case (RemotePhase.awaitingAck, 'ack'):
-        await _sendNext(current);
+        if (current._pendingChunks == 0) throw const FormatException('Unexpected chunk acknowledgement');
+        current._pendingChunks--;
+        // ACKs are ordered and sent only after the receiver writes the chunk.
+        final remaining = current.size - current.transferred;
+        current.transferred += remaining < _chunkSize ? remaining : _chunkSize;
+        await _fillWindow(current);
       case (RemotePhase.waiting, 'decline'):
         await _clearTransfer();
         status = '${current.peer.name} declined the transfer';
@@ -296,26 +309,29 @@ class RemoteClient extends ChangeNotifier {
     }
   }
 
-  Future<void> _sendNext(RemoteTransfer current) async {
-    final offset = current.transferred;
-    if (offset == current.size) {
+  Future<void> _fillWindow(RemoteTransfer current) async {
+    if (current.transferred == current.size) {
       if (await current.source!.length() != current.size) throw StateError('Source file size changed');
       current.phase = RemotePhase.awaitingReceipt;
       _write(await current.session.seal('finish'));
       status = 'Waiting for delivery confirmation';
       return;
     }
-    final end = offset + _chunkSize < current.size ? offset + _chunkSize : current.size;
-    final buffer = BytesBuilder(copy: false);
-    await for (final bytes in current.source!.openRead(offset, end)) {
-      if (buffer.length + bytes.length > end - offset) throw StateError('Source file changed');
-      buffer.add(bytes);
-    }
-    if (buffer.length != end - offset) throw StateError('Source file changed');
-    _write(await current.session.seal('chunk', buffer.takeBytes()));
-    current.transferred = end;
     current.phase = RemotePhase.awaitingAck;
     status = 'Sending ${current.name}';
+    while (current._pendingChunks < _chunkWindow && current._sentBytes < current.size) {
+      final offset = current._sentBytes;
+      final end = offset + _chunkSize < current.size ? offset + _chunkSize : current.size;
+      final buffer = BytesBuilder(copy: false);
+      await for (final bytes in current.source!.openRead(offset, end)) {
+        if (buffer.length + bytes.length > end - offset) throw StateError('Source file changed');
+        buffer.add(bytes);
+      }
+      if (buffer.length != end - offset) throw StateError('Source file changed');
+      _write(await current.session.seal('chunk', buffer.takeBytes()));
+      current._sentBytes = end;
+      current._pendingChunks++;
+    }
   }
 
   Future<void> _abort(RemoteTransfer current, String reason) async {

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -38,7 +37,7 @@ Device device(String fingerprint, {required String ip, required int port, requir
 );
 
 void main() {
-  final messenger = TestWidgetsFlutterBinding.ensureInitialized().defaultBinaryMessenger as TestDefaultBinaryMessenger;
+  final messenger = TestWidgetsFlutterBinding.ensureInitialized().defaultBinaryMessenger;
   late List<String> networks;
   late String? wifiAddress;
 
