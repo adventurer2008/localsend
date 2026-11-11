@@ -1,0 +1,57 @@
+name: Mobile share import checks
+on:
+  push:
+    branches: [test/mobile-share-import]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.9"
+          channel: stable
+      - name: Compile iOS and its share extension
+        working-directory: app
+        run: |
+          rustup toolchain install --profile minimal
+          rustup target add aarch64-apple-ios-sim
+          flutter build ios --simulator --debug
+      - name: Verify iOS imports an item from its App Group
+        run: bash support/scripts/mobile-share-smoke/ios.sh
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download build 68
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
+          artifact=''
+          for attempt in {1..80}; do
+            artifact="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$base/runs/42971414675/artifacts" | jq -r '.artifacts[] | select(.name == "LocalSend-Remote-Android") | .id')"
+            if [[ -n "$artifact" ]]; then break; fi
+            sleep 20
+          done
+          test -n "$artifact"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$base/artifacts/$artifact/zip" -o "$RUNNER_TEMP/target.zip"
+          unzip -q "$RUNNER_TEMP/target.zip" -d "$RUNNER_TEMP/share-target"
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Share images from a private Android content provider
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: bash "$GITHUB_WORKSPACE/support/scripts/mobile-share-smoke/android.sh"
+
