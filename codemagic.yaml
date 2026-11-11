@@ -21,14 +21,30 @@ definitions:
 workflows:
   ios-relay-compile:
     <<: *ios_instance
-    name: iOS relay - unsigned compile check
+    name: iOS relay - unsigned IPA for Sideloadly
     environment: *ios_tools
     scripts:
-      - name: Remove the multicast entitlement
-        script: /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.networking.multicast' ios/Runner/Runner.entitlements
+      - name: Prepare the main app for personal signing
+        script: |
+          set -euo pipefail
+          /usr/libexec/PlistBuddy -c 'Clear dict' ios/Runner/Runner.entitlements
+          sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = org\.localsend\.localsendApp/PRODUCT_BUNDLE_IDENTIFIER = io.github.adventurer2008.localsend.relay/' \
+            ios/Runner.xcodeproj/project.pbxproj
       - *ios_dependencies
       - name: Compile for iPhone without signing
         script: flutter build ios --release --no-codesign
+      - name: Package the main app as an unsigned IPA
+        script: |
+          set -euo pipefail
+          staging=$(mktemp -d)
+          trap 'rm -rf "$staging"' EXIT
+          mkdir -p "$staging/Payload" build/ios/ipa
+          ditto build/ios/iphoneos/Runner.app "$staging/Payload/Runner.app"
+          rm -rf "$staging/Payload/Runner.app/PlugIns/ShareExtension.appex"
+          ditto -c -k --norsrc --keepParent "$staging/Payload" build/ios/ipa/LocalSend-Relay-Unsigned.ipa
+          unzip -tq build/ios/ipa/LocalSend-Relay-Unsigned.ipa
+    artifacts:
+      - app/build/ios/ipa/LocalSend-Relay-Unsigned.ipa
 
   ios-relay-adhoc:
     <<: *ios_instance
