@@ -14,6 +14,7 @@ import 'package:localsend_app/provider/network/scan_facade.dart';
 import 'package:localsend_app/provider/network/send_provider.dart';
 import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
 import 'package:localsend_app/provider/settings_provider.dart';
+import 'package:localsend_app/remote_transfer/remote_page.dart';
 import 'package:localsend_app/util/favorites.dart';
 import 'package:localsend_app/util/native/file_picker.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
@@ -167,6 +168,17 @@ class SendTab extends StatelessWidget {
                 ),
               ),
             ],
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(start: _horizontalPadding),
+                child: TextButton.icon(
+                  onPressed: () => context.push(() => const RemotePage()),
+                  icon: const Icon(Icons.devices),
+                  label: Text(remoteTransferLabel(context)),
+                ),
+              ),
+            ),
             Row(
               children: [
                 const SizedBox(width: _horizontalPadding),

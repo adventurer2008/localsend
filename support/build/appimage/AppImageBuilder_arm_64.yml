@@ -30,6 +30,7 @@ AppDir:
       - sourceline: deb http://security.ubuntu.com/ubuntu/ jammy-security multiverse
     include:
       - libayatana-appindicator3-1:arm64
+      - libsecret-1-0:arm64
       - librsvg2-common:arm64
     exclude:
       - adwaita-icon-theme:*

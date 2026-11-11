@@ -1,6 +1,6 @@
 # REQUIREMENTS
 # (1) For Flutter: sudo apt install curl clang cmake libgtk-3-dev ninja-build
-#     Project specific: sudo apt install libayatana-appindicator3-dev
+#     Project specific: sudo apt install libayatana-appindicator3-dev libsecret-1-dev
 # (2) For AppImage:
 #     sudo apt install libfuse2
 #     Download from https://github.com/AppImageCrafters/appimage-builder/releases

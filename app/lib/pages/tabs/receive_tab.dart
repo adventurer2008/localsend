@@ -9,6 +9,7 @@ import 'package:localsend_app/provider/animation_provider.dart';
 import 'package:localsend_app/provider/local_ip_provider.dart';
 import 'package:localsend_app/provider/network/server/server_provider.dart';
 import 'package:localsend_app/provider/settings_provider.dart';
+import 'package:localsend_app/remote_transfer/remote_page.dart';
 import 'package:localsend_app/widget/animations/initial_fade_transition.dart';
 import 'package:localsend_app/widget/column_list_view.dart';
 import 'package:localsend_app/widget/custom_icon_button.dart';
@@ -160,6 +161,13 @@ class _CornerButtons extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
+            Tooltip(
+              message: remoteTransferLabel(context),
+              child: CustomIconButton(
+                onPressed: () => context.push(() => const RemotePage()),
+                child: const Icon(Icons.devices),
+              ),
+            ),
             if (!showAdvanced)
               AnimatedOpacity(
                 opacity: showHistoryButton ? 1 : 0,

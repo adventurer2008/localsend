@@ -22,6 +22,7 @@ import 'package:localsend_app/provider/security_provider.dart';
 import 'package:localsend_app/provider/selection/selected_receiving_files_provider.dart';
 import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
 import 'package:localsend_app/provider/settings_provider.dart';
+import 'package:localsend_app/remote_transfer/remote_settings.dart';
 import 'package:localsend_app/util/native/directories.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_app/util/native/tray_helper.dart';
@@ -139,7 +140,11 @@ class ReceiveController {
       quickSave = true;
     }
 
-    if (quickSave) {
+    final isPairedDevice =
+        quickSave &&
+        event.certFingerprint != null &&
+        (await RemoteSettings.load()).peers.values.any((peer) => peer.lanFingerprint == senderFingerprint.toUpperCase());
+    if (quickSave && !isPairedDevice) {
       // Push before accepting: the permission request in [acceptFileRequest] may block for a while.
       // ignore: use_build_context_synchronously, unawaited_futures
       Routerino.context.pushImmediately(
