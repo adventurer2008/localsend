@@ -48,10 +48,9 @@ class _RemoteWatcherState extends State<RemoteWatcher> with Refena, WidgetsBindi
     }
     _shownOffer = transfer.session.id;
     _opening = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    scheduleMicrotask(() {
       if (mounted) unawaited(_openOffer(runtime, transfer.session.id));
     });
-    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   Future<void> _openOffer(RemoteRuntime runtime, String id) async {
@@ -64,6 +63,7 @@ class _RemoteWatcherState extends State<RemoteWatcher> with Refena, WidgetsBindi
       debugPrint('Could not open incoming remote transfer confirmation');
     } finally {
       _opening = false;
+      _onChanged();
     }
   }
 
