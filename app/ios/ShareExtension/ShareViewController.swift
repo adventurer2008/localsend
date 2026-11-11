@@ -90,18 +90,21 @@ final class ShareViewController: UIViewController {
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
            let source = (try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier)) as? URL,
            source.isFileURL {
-            return try copy(source, suggested: nil, fileType: nil, to: directory)
+            return try await Task.detached {
+                try Self.copy(source, suggested: nil, fileType: nil, to: directory)
+            }.value
         }
         let type = provider.registeredTypeIdentifiers.compactMap { UTType($0) }.first {
             $0.conforms(to: .data) && (!$0.conforms(to: .text) || provider.suggestedName != nil)
         }
         guard let type else { return nil }
+        let suggested = provider.suggestedName
         return try await withCheckedThrowingContinuation { continuation in
             provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { source, error in
                 do {
                     guard let source else { throw error ?? CocoaError(.fileReadUnknown) }
                     // The provider's temporary URL is valid only inside this callback.
-                    continuation.resume(returning: try self.copy(source, suggested: provider.suggestedName, fileType: type, to: directory))
+                    continuation.resume(returning: try Self.copy(source, suggested: suggested, fileType: type, to: directory))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -109,7 +112,7 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func copy(_ source: URL, suggested: String?, fileType: UTType?, to directory: URL) throws -> String {
+    nonisolated private static func copy(_ source: URL, suggested: String?, fileType: UTType?, to directory: URL) throws -> String {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {

@@ -1,7 +1,9 @@
 name: Remote transfer installers
+run-name: ${{ contains(github.event.head_commit.message, '[release]') && 'Release installers' || 'Vivo ARM64 test APK' }}
 
 on:
   push:
+    # A head commit with [release] builds the universal APK and Windows installer.
     branches: [build/remote-transfer-v1]
 
 permissions:
@@ -9,9 +11,12 @@ permissions:
 
 env:
   FLUTTER_VERSION: "3.41.9"
+  # Increase for each new installable build so both Android packages can upgrade in place.
+  BUILD_NUMBER: "69"
 
 jobs:
   windows:
+    if: contains(github.event.head_commit.message, '[release]')
     runs-on: windows-latest
     steps:
       - run: git config --system core.longpaths true
@@ -27,8 +32,7 @@ jobs:
           & $makepri.FullName new /pr support\build\msix\content /cf support\build\msix\priconfig.xml /mn support\build\msix\content\AppxManifest.xml /of support\build\msix\content\resources.pri /o
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\makeappx.exe' pack /o /d support\build\msix\content /nv /p app\windows\localsend_msix_helper.msix
-      - run: flutter build windows --release
-          --build-number=68
+      - run: flutter build windows --release "--build-number=$env:BUILD_NUMBER"
         working-directory: app
       - name: Build per-user installer
         run: |
@@ -47,12 +51,30 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_BUILD: ${{ contains(github.event.head_commit.message, '[release]') }}
+      GRADLE_OPTS: -Dorg.gradle.caching=true
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: false
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: android-cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: android-cargo-${{ runner.os }}-${{ runner.arch }}-
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -76,12 +98,42 @@ jobs:
           EOF
           sed -i 's/applicationId "org.localsend.localsend_app"/applicationId "org.localsend.localsend_app.remote"/' app/android/app/build.gradle
           sed -i 's/android:label="LocalSend"/android:label="LocalSend Remote"/' app/android/app/src/main/AndroidManifest.xml
-      - name: Build universal Android APK
+      - name: Build Android APK
         working-directory: app
-        run: flutter build apk --release --build-number=68
-      - run: cp app/build/app/outputs/flutter-apk/app-release.apk LocalSend-Remote-Android.apk
+        run: |
+          args=(--release "--build-number=$BUILD_NUMBER")
+          if [[ "$RELEASE_BUILD" != true ]]; then
+            args+=(--target-platform android-arm64)
+          fi
+          flutter build apk "${args[@]}"
+      - name: Verify and stage APK
+        id: apk
+        run: |
+          apk=app/build/app/outputs/flutter-apk/app-release.apk
+          name=LocalSend-Remote-Android-Vivo-ARM64
+          expected_abis=(arm64-v8a)
+          if [[ "$RELEASE_BUILD" == true ]]; then
+            name=LocalSend-Remote-Android
+            expected_abis+=(armeabi-v7a x86_64)
+          fi
+          python3 - "$apk" "${expected_abis[@]}" <<'PY'
+          import sys
+          from pathlib import PurePosixPath
+          from zipfile import ZipFile
+
+          apk_path, *expected_abis = sys.argv[1:]
+          with ZipFile(apk_path) as apk:
+              libraries = [PurePosixPath(entry) for entry in apk.namelist() if entry.startswith("lib/") and entry.endswith(".so")]
+          apk_abis = {library.parts[1] for library in libraries}
+          rust_abis = {library.parts[1] for library in libraries if library.name == "librust_lib_localsend_app.so"}
+          if apk_abis != set(expected_abis) or rust_abis != set(expected_abis):
+              sys.exit(f"Expected {expected_abis}, found APK ABIs {sorted(apk_abis)} and Rust ABIs {sorted(rust_abis)}")
+          print(f"Verified APK and Rust ABIs: {sorted(apk_abis)}")
+          PY
+          cp "$apk" "$name.apk"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v6
         with:
-          name: LocalSend-Remote-Android
-          path: LocalSend-Remote-Android.apk
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}.apk
           if-no-files-found: error
