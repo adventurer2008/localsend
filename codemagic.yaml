@@ -24,6 +24,8 @@ workflows:
     name: iOS relay - unsigned compile check
     environment: *ios_tools
     scripts:
+      - name: Remove the multicast entitlement
+        script: /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.networking.multicast' ios/Runner/Runner.entitlements
       - *ios_dependencies
       - name: Compile for iPhone without signing
         script: flutter build ios --release --no-codesign
