@@ -28,6 +28,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\makeappx.exe' pack /o /d support\build\msix\content /nv /p app\windows\localsend_msix_helper.msix
       - run: flutter build windows --release
+          --build-number=65
         working-directory: app
       - name: Build per-user installer
         run: |
@@ -56,16 +57,28 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-      - name: Prepare test signing and app ID
+      - name: Prepare fixed signing and app ID
+        env:
+          ANDROID_STORE_BASE64: ${{ secrets.REMOTE_ANDROID_STORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.REMOTE_ANDROID_STORE_PASSWORD }}
         run: |
           rustup toolchain install --profile minimal
           sh support/scripts/remove_proprietary_dependencies.sh
-          sed -i '/^    buildTypes {/,/^    }/s/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' app/android/app/build.gradle
+          test -n "$ANDROID_STORE_BASE64"
+          test -n "$ANDROID_STORE_PASSWORD"
+          printf '%s' "$ANDROID_STORE_BASE64" | base64 --decode > "$RUNNER_TEMP/remote-release.p12"
+          cat > app/android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/remote-release.p12
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyPassword=$ANDROID_STORE_PASSWORD
+          keyAlias=localsend-remote
+          storeType=pkcs12
+          EOF
           sed -i 's/applicationId "org.localsend.localsend_app"/applicationId "org.localsend.localsend_app.remote"/' app/android/app/build.gradle
           sed -i 's/android:label="LocalSend"/android:label="LocalSend Remote"/' app/android/app/src/main/AndroidManifest.xml
       - name: Build universal Android APK
         working-directory: app
-        run: flutter build apk --release
+        run: flutter build apk --release --build-number=65
       - run: cp app/build/app/outputs/flutter-apk/app-release.apk LocalSend-Remote-Android.apk
       - uses: actions/upload-artifact@v6
         with:
