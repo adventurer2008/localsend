@@ -51,6 +51,7 @@ class _RemoteWatcherState extends State<RemoteWatcher> with Refena, WidgetsBindi
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_openOffer(runtime, transfer.session.id));
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   Future<void> _openOffer(RemoteRuntime runtime, String id) async {
